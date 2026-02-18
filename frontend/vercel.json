@@ -1,5 +1,5 @@
 {
   "env": {
-    "NEXT_PUBLIC_API_URL": "@tabula_api_url"
+    "NEXT_PUBLIC_API_URL": "https://tabula-pdf-production.up.railway.app/"
   }
 }
