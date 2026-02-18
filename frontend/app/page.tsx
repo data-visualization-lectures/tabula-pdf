@@ -158,7 +158,7 @@ export default function Home() {
             {loading ? (
               <>
                 <span className="animate-spin">⏳</span>
-                抽出中...
+                抽出中...（初回は起動待ちで10〜20秒かかる場合があります）
               </>
             ) : (
               <>

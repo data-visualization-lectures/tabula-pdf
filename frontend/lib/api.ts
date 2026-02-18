@@ -17,6 +17,33 @@ export interface ExtractResponse {
     message?: string;
 }
 
+// Railway のコールドスタート対策：最大3回リトライ
+async function fetchWithRetry(
+    url: string,
+    options: RequestInit,
+    retries = 3,
+    delayMs = 3000
+): Promise<Response> {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const res = await fetch(url, options);
+            // 502/503 はコールドスタート中の可能性があるのでリトライ
+            if ((res.status === 502 || res.status === 503) && i < retries - 1) {
+                await new Promise((r) => setTimeout(r, delayMs));
+                continue;
+            }
+            return res;
+        } catch (e) {
+            if (i < retries - 1) {
+                await new Promise((r) => setTimeout(r, delayMs));
+                continue;
+            }
+            throw e;
+        }
+    }
+    throw new Error("リクエストが失敗しました（リトライ上限）");
+}
+
 export async function extractTables(
     file: File,
     mode: ExtractionMode = "lattice",
@@ -27,7 +54,7 @@ export async function extractTables(
     formData.append("mode", mode);
     formData.append("pages", pages);
 
-    const res = await fetch(`${API_BASE_URL}/extract`, {
+    const res = await fetchWithRetry(`${API_BASE_URL}/extract`, {
         method: "POST",
         body: formData,
     });
@@ -54,7 +81,7 @@ export async function downloadTable(
     formData.append("mode", mode);
     formData.append("pages", pages);
 
-    const res = await fetch(`${API_BASE_URL}/download`, {
+    const res = await fetchWithRetry(`${API_BASE_URL}/download`, {
         method: "POST",
         body: formData,
     });
