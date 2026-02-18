@@ -75,8 +75,8 @@ export default function TablePreview({
                     </div>
                     <p className="text-xs text-slate-500">
                         {mode === "lattice"
-                            ? "罫線で区切られた表に最適"
-                            : "罫線のない表・スペース区切りに最適"}
+                            ? "縦横の罫線（セル境界）を使って表構造を復元。Excel由来の格子型PDF向け。"
+                            : "文字の位置と間隔（空白）から列境界を推定。罫線のない表やテキスト中心PDF向け。"}
                     </p>
                 </div>
 
