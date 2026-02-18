@@ -34,7 +34,7 @@ export default function TablePreview({
     const handleDownload = async (format: DownloadFormat) => {
         setDownloading(format);
         try {
-            await downloadTable(file, activeIndex, format, mode, pages, area, regions);
+            await downloadTable(file, -1, format, mode, pages, area, regions);
         } catch (e) {
             alert(`ダウンロードに失敗しました: ${e instanceof Error ? e.message : e}`);
         } finally {
@@ -157,7 +157,7 @@ export default function TablePreview({
             {/* ダウンロードパネル */}
             {activeTable && (
                 <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-sm font-medium text-slate-600">ダウンロード：</span>
+                    <span className="text-sm font-medium text-slate-600">全ページ一括ダウンロード：</span>
                     {(["csv", "excel", "json"] as DownloadFormat[]).map((fmt) => (
                         <button
                             key={fmt}

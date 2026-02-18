@@ -154,7 +154,7 @@ export async function downloadTable(
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `table_${tableIndex + 1}.${ext}`;
+    a.download = tableIndex === -1 ? `tables_all.${ext}` : `table_${tableIndex + 1}.${ext}`;
     a.click();
     URL.revokeObjectURL(url);
 }

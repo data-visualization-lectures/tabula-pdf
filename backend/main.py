@@ -401,15 +401,23 @@ async def download_table(
     finally:
         os.unlink(tmp_path)
 
-    if not all_dfs or table_index >= len(all_dfs):
+    if not all_dfs:
+        raise HTTPException(status_code=404, detail="テーブルが見つかりません")
+
+    if table_index != -1 and table_index >= len(all_dfs):
         raise HTTPException(status_code=404, detail="指定したテーブルが見つかりません")
 
-    df = all_dfs[table_index].fillna("")
-    base_name = f"table_{table_index + 1}"
+    if table_index == -1:
+        selected_dfs = [df.fillna("") for df in all_dfs]
+        base_name = "tables_all"
+    else:
+        selected_dfs = [all_dfs[table_index].fillna("")]
+        base_name = f"table_{table_index + 1}"
 
     if format == "csv":
         output = io.StringIO()
-        df.to_csv(output, index=False, encoding="utf-8-sig")
+        for i, df in enumerate(selected_dfs):
+            df.to_csv(output, index=False)
         output.seek(0)
         return StreamingResponse(
             iter([output.getvalue()]),
@@ -421,7 +429,12 @@ async def download_table(
     elif format == "excel":
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Sheet1")
+            if len(selected_dfs) == 1:
+                selected_dfs[0].to_excel(writer, index=False, sheet_name="Sheet1")
+            else:
+                for i, df in enumerate(selected_dfs):
+                    sheet_name = f"Table_{i + 1}"[:31]
+                    df.to_excel(writer, index=False, sheet_name=sheet_name)
         output.seek(0)
         return StreamingResponse(
             iter([output.read()]),
@@ -430,7 +443,21 @@ async def download_table(
         )
 
     elif format == "json":
-        json_str = df.to_json(orient="records", force_ascii=False)
+        if len(selected_dfs) == 1:
+            json_str = selected_dfs[0].to_json(orient="records", force_ascii=False)
+        else:
+            payload = []
+            for i, df in enumerate(selected_dfs):
+                payload.append(
+                    {
+                        "index": i,
+                        "rows": len(df),
+                        "columns": len(df.columns),
+                        "headers": df.columns.tolist(),
+                        "data": df.values.tolist(),
+                    }
+                )
+            json_str = json.dumps(payload, ensure_ascii=False)
         return StreamingResponse(
             iter([json_str]),
             media_type="application/json",
