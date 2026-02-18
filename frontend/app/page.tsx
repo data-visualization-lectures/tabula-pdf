@@ -1,172 +1,303 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import UploadZone from "@/components/UploadZone";
+import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
-import { ExtractResponse, ExtractionMode, extractTables } from "@/lib/api";
+import { ExtractResponse, ExtractionMode, detectTables, extractTables, getPageCount } from "@/lib/api";
+
+type Step = "upload" | "select" | "preview";
+
+// 複数領域（ページ、座標）をJSON文字列化
+function areasToRegionsJson(areas: Area[]): string {
+  if (areas.length === 0) return "[]";
+  const regions = areas.map(a => ({
+    page: a.page,
+    top: a.top,
+    left: a.left,
+    bottom: a.bottom,
+    right: a.right
+  }));
+  return JSON.stringify(regions);
+}
+
+function areasToPages(areas: Area[]): string {
+  if (areas.length === 0) return "all";
+  const pages = [...new Set(areas.map((a) => a.page))].sort((a, b) => a - b);
+  return pages.join(",");
+}
 
 export default function Home() {
+  const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
-  const [mode, setMode] = useState<ExtractionMode>("lattice");
-  const [pages, setPages] = useState("all");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ExtractResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [pageCount, setPageCount] = useState(0);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const areasRef = useRef<Area[]>([]);
+  /* Policy A: 履歴を useRef 化 */
+  const processedPages = useRef<Set<number>>(new Set());
 
-  const handleFileSelect = (f: File) => {
+  /* Policy A: onProcessPage を useCallback 化して安定化 */
+  const handleProcessPage = useCallback((page: number) => {
+    if (!processedPages.current.has(page)) {
+      processedPages.current.add(page);
+      setProcessedPageCount(processedPages.current.size);
+    }
+  }, []);
+
+  const [mode, setMode] = useState<ExtractionMode>("lattice");
+  const [result, setResult] = useState<ExtractResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isReextracting, setIsReextracting] = useState(false);
+  const [isAutoDetecting, setIsAutoDetecting] = useState(false);
+  const [autoDetectCurrentPage, setAutoDetectCurrentPage] = useState<number | null>(null);
+  const [processedPageCount, setProcessedPageCount] = useState(0);
+
+  // Screen A → B
+  const handleFileSelect = async (f: File) => {
     setFile(f);
     setResult(null);
-    setError(null);
-  };
-
-  const handleExtract = async () => {
-    if (!file) return;
+    setAreas([]);
+    areasRef.current = [];
+    setIsAutoDetecting(false);
+    setAutoDetectCurrentPage(null);
+    setProcessedPageCount(0);
+    // Policy A: リセット経路の網羅
+    processedPages.current.clear();
     setLoading(true);
-    setError(null);
-    setResult(null);
     try {
-      const data = await extractTables(file, mode, pages);
-      setResult(data);
+      const count = await getPageCount(f);
+      setPageCount(count);
+      setStep("select");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "エラーが発生しました");
+      setError(e instanceof Error ? e.message : "PDF の読み込みに失敗しました");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleReset = () => {
-    setFile(null);
+  // Screen B → C（抽出実行）
+  const handleExtract = async () => {
+    if (!file || isAutoDetecting) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const currentAreas = areasRef.current;
+      const area = "";
+      const regions = areasToRegionsJson(currentAreas);
+      const pages = currentAreas.length > 0 ? areasToPages(currentAreas) : "all";
+      const data = await extractTables(file, mode, pages, area, regions);
+      setResult(data);
+      setStep("preview");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "抽出に失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Screen C: アルゴリズム切替 → 再抽出
+  const handleModeChange = async (newMode: ExtractionMode) => {
+    if (!file || newMode === mode) return;
+    setMode(newMode);
+    setIsReextracting(true);
+    try {
+      const currentAreas = areasRef.current;
+      const area = "";
+      const regions = areasToRegionsJson(currentAreas);
+      const pages = currentAreas.length > 0 ? areasToPages(currentAreas) : "all";
+      const data = await extractTables(file, newMode, pages, area, regions);
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "再抽出に失敗しました");
+    } finally {
+      setIsReextracting(false);
+    }
+  };
+
+  // Screen C → B（選択に戻る）
+  const handleRevise = () => {
+    setStep("select");
     setResult(null);
     setError(null);
-    setPages("all");
-    setMode("lattice");
   };
+
+  // 全リセット
+  const handleReset = () => {
+    setStep("upload");
+    setFile(null);
+    setAreas([]);
+    areasRef.current = [];
+    setResult(null);
+    setError(null);
+    setMode("lattice");
+    setPageCount(1);
+    setIsAutoDetecting(false);
+    setAutoDetectCurrentPage(null);
+    setProcessedPageCount(0);
+    // Policy A: リセット経路の網羅
+    processedPages.current.clear();
+  };
+
+  // ステップインジケーター
+  const steps: { key: Step; label: string }[] = [
+    { key: "upload", label: "① アップロード" },
+    { key: "select", label: "② 範囲選択" },
+    { key: "preview", label: "③ プレビュー & エクスポート" },
+  ];
+
+  const handleAreasChange = (nextAreas: React.SetStateAction<Area[]>) => {
+    const resolved = typeof nextAreas === "function"
+      ? (nextAreas as (prev: Area[]) => Area[])(areasRef.current)
+      : nextAreas;
+    areasRef.current = resolved;
+    setAreas(resolved);
+    // 範囲が更新されたら、既存の抽出結果は無効化する
+    setResult(null);
+  };
+
+  useEffect(() => {
+    if (!file || pageCount <= 0) return;
+
+    let cancelled = false;
+
+    const runAutoDetectAllPages = async () => {
+      setIsAutoDetecting(true);
+      setAutoDetectCurrentPage(null);
+      setProcessedPageCount(0);
+      processedPages.current.clear();
+      const collectedAreas: Area[] = [];
+
+      for (let p = 1; p <= pageCount; p++) {
+        if (cancelled) return;
+        setAutoDetectCurrentPage(p);
+
+        try {
+          const res = await detectTables(file, p);
+          if (cancelled) return;
+
+          if (res.areas.length > 0) {
+            collectedAreas.push(...res.areas);
+          }
+        } catch (e) {
+          if (!cancelled) {
+            console.warn(`[AutoDetect] Failed: Page ${p}`, e);
+          }
+        } finally {
+          handleProcessPage(p);
+        }
+      }
+
+      if (!cancelled) {
+        areasRef.current = collectedAreas;
+        setAreas(collectedAreas);
+        setResult(null);
+        setAutoDetectCurrentPage(null);
+        setIsAutoDetecting(false);
+      }
+    };
+
+    runAutoDetectAllPages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file, pageCount, handleProcessPage]);
+
+  /* 修正: regionsString を定義して渡す */
+  const currentAreasForPayload = areasRef.current;
+  const areaString = "";
+  const regionsString = currentAreasForPayload.length > 0 ? areasToRegionsJson(currentAreasForPayload) : "[]";
+  const pagesString = currentAreasForPayload.length > 0 ? areasToPages(currentAreasForPayload) : "all";
+
+  /* ... */
+
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white">
       {/* ヘッダー */}
-      <header className="border-b border-white/10 backdrop-blur-sm">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
-          <span className="text-2xl">📊</span>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Tabula Web</h1>
-            <p className="text-xs text-slate-400">PDF から表データを抽出</p>
+      <header className="border-b border-white/10 backdrop-blur-sm sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📊</span>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">Tabula Web</h1>
+              <p className="text-xs text-slate-400">PDF から表データを抽出</p>
+            </div>
           </div>
+          {step !== "upload" && (
+            <button
+              onClick={handleReset}
+              className="text-slate-400 hover:text-white text-sm transition-colors"
+            >
+              ✕ 最初からやり直す
+            </button>
+          )}
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-10 flex flex-col gap-8">
-        {/* ヒーロー */}
-        <div className="text-center">
-          <h2 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-300 to-cyan-300 bg-clip-text text-transparent">
-            PDF の表を一瞬で抽出
-          </h2>
-          <p className="mt-3 text-slate-400 text-lg">
-            PDF をアップロードするだけで、表データを CSV・Excel・JSON に変換できます
-          </p>
-        </div>
+      <main className="max-w-5xl mx-auto px-6 py-8 flex flex-col gap-8">
+        {/* ステップインジケーター */}
+        <div className="flex items-center gap-2">
+          {steps.map((s, i) => {
+            // ステップがクリック可能か判定
+            const isClickable =
+              s.key === "upload" ||
+              (s.key === "select" && file !== null) ||
+              (s.key === "preview" &&
+                !isAutoDetecting &&
+                ((step === "select" && file !== null) || result !== null));
 
-        {/* メインカード */}
-        <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
+            const isActive = step === s.key;
+            const isPast = steps.findIndex((x) => x.key === step) > i;
 
-          {/* アップロードゾーン */}
-          <UploadZone onFileSelect={handleFileSelect} disabled={loading} />
+            return (
+              <div key={s.key} className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (!isClickable) return;
 
-          {/* ファイル情報 */}
-          {file && (
-            <div className="flex items-center justify-between bg-white/5 rounded-xl px-5 py-3 border border-white/10">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">📄</span>
-                <div>
-                  <p className="font-medium text-sm">{file.name}</p>
-                  <p className="text-xs text-slate-400">
-                    {(file.size / 1024).toFixed(1)} KB
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleReset}
-                className="text-slate-400 hover:text-white text-sm transition-colors"
-              >
-                ✕ リセット
-              </button>
-            </div>
-          )}
+                    if (s.key === "upload") {
+                      handleReset();
+                      return;
+                    }
 
-          {/* オプション */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* 抽出モード */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                抽出モード
-              </label>
-              <div className="flex rounded-xl overflow-hidden border border-white/10">
-                {(["lattice", "stream"] as ExtractionMode[]).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setMode(m)}
-                    className={`
-                      flex-1 py-2.5 text-sm font-medium transition-all
-                      ${mode === m
-                        ? "bg-indigo-600 text-white"
-                        : "bg-white/5 text-slate-400 hover:bg-white/10"
+                    if (s.key === "select") {
+                      if (step === "preview") {
+                        handleRevise();
+                      } else {
+                        setStep("select");
                       }
-                    `}
-                  >
-                    {m === "lattice" ? "🔲 Lattice（罫線あり）" : "〰 Stream（罫線なし）"}
-                  </button>
-                ))}
+                      return;
+                    }
+
+                    // preview
+                    if (step === "select") {
+                      await handleExtract();
+                    } else {
+                      setStep("preview");
+                    }
+                  }}
+                  disabled={!isClickable}
+                  className={`
+                    text-sm font-medium px-3 py-1 rounded-full transition-all
+                    ${isActive
+                      ? "bg-indigo-600 text-white cursor-default"
+                      : isPast
+                        ? "bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800 cursor-pointer"
+                        : "text-slate-500 cursor-not-allowed"
+                    }
+                  `}
+                >
+                  {s.label}
+                </button>
+                {i < steps.length - 1 && (
+                  <span className="text-slate-600">→</span>
+                )}
               </div>
-              <p className="text-xs text-slate-500">
-                {mode === "lattice"
-                  ? "罫線で区切られた表に最適"
-                  : "罫線のない表・スペース区切りに最適"}
-              </p>
-            </div>
-
-            {/* ページ指定 */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                ページ指定
-              </label>
-              <input
-                type="text"
-                value={pages}
-                onChange={(e) => setPages(e.target.value)}
-                placeholder="例: all, 1, 1-3, 1,3,5"
-                className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <p className="text-xs text-slate-500">
-                all で全ページ、1-3 で範囲指定
-              </p>
-            </div>
-          </div>
-
-          {/* 抽出ボタン */}
-          <button
-            onClick={handleExtract}
-            disabled={!file || loading}
-            className="
-              w-full py-3.5 rounded-xl font-bold text-base
-              bg-gradient-to-r from-indigo-500 to-cyan-500
-              hover:from-indigo-400 hover:to-cyan-400
-              disabled:opacity-40 disabled:cursor-not-allowed
-              transition-all duration-200 shadow-lg shadow-indigo-500/20
-              flex items-center justify-center gap-2
-            "
-          >
-            {loading ? (
-              <>
-                <span className="animate-spin">⏳</span>
-                抽出中...（初回は起動待ちで10〜20秒かかる場合があります）
-              </>
-            ) : (
-              <>
-                <span>🔍</span>
-                テーブルを抽出する
-              </>
-            )}
-          </button>
+            );
+          })}
         </div>
 
         {/* エラー表示 */}
@@ -176,36 +307,157 @@ export default function Home() {
           </div>
         )}
 
-        {/* 結果表示 */}
-        {result && (
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold">
-                {result.count > 0
-                  ? `${result.count} 件のテーブルが見つかりました`
-                  : "テーブルが見つかりませんでした"}
-              </h3>
-              {result.count > 0 && (
-                <span className="text-xs text-slate-400 bg-white/5 px-3 py-1 rounded-full border border-white/10">
-                  モード: {mode}
-                </span>
-              )}
+        {/* ─── Screen A: アップロード ─── */}
+        {step === "upload" && (
+          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
+            <div className="text-center">
+              <h2 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-300 to-cyan-300 bg-clip-text text-transparent">
+                PDF の表を一瞬で抽出
+              </h2>
+              <p className="mt-2 text-slate-400">
+                PDF をアップロードして、抽出範囲を選択するだけ
+              </p>
             </div>
-
-            {result.count > 0 && file ? (
-              <div className="bg-white rounded-xl p-4 text-slate-900">
-                <TablePreview
-                  tables={result.tables}
-                  file={file}
-                  mode={mode}
-                  pages={pages}
-                />
-              </div>
-            ) : (
-              <p className="text-slate-400 text-sm">
-                抽出モードを切り替えて再試行してみてください。
+            <UploadZone onFileSelect={handleFileSelect} disabled={loading} />
+            {loading && (
+              <p className="text-center text-slate-400 text-sm animate-pulse">
+                ⏳ PDF を読み込んでいます...
               </p>
             )}
+          </div>
+        )}
+
+        {/* ─── Screen B: 範囲選択 ─── */}
+        {step === "select" && file && (
+          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold">抽出範囲を選択</h2>
+                <p className="text-sm text-slate-400 mt-1">
+                  📄 {file.name}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                {areas.length > 0 ? (
+                  <span className="px-3 py-1 rounded-full bg-red-500/20 border border-red-400/30 text-red-300">
+                    {areas.length} 件の範囲を選択中
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                    範囲未選択（全体を抽出）
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <PdfPageViewer
+              pdfFile={file!}
+              pageCount={pageCount}
+              areas={areas}
+              onAreasChange={handleAreasChange}
+              isAutoDetecting={isAutoDetecting}
+              autoDetectCurrentPage={autoDetectCurrentPage}
+              autoDetectProcessedCount={processedPageCount}
+            />
+
+            {isAutoDetecting ? (
+              <div className="w-full py-3.5 rounded-xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-200 text-sm flex items-center justify-center gap-2">
+                <span className="animate-spin">⏳</span>
+                自動範囲選択中...（{processedPageCount}/{pageCount} ページ）
+              </div>
+            ) : (
+              <button
+                onClick={handleExtract}
+                disabled={loading}
+                className="
+                                w-full py-3.5 rounded-xl font-bold text-base
+                                bg-gradient-to-r from-indigo-500 to-cyan-500
+                                hover:from-indigo-400 hover:to-cyan-400
+                                disabled:opacity-40 disabled:cursor-not-allowed
+                                transition-all duration-200 shadow-lg shadow-indigo-500/20
+                                flex items-center justify-center gap-2
+                            "
+              >
+                {loading ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    抽出中...（初回は起動待ちで10〜20秒かかる場合があります）
+                  </>
+                ) : (
+                  <>
+                    <span>🔍</span>
+                    {areas.length > 0
+                      ? `選択範囲（全${areas.length}件）を抽出してプレビュー`
+                      : "全体を抽出してプレビュー"}
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ─── Screen C: プレビュー & エクスポート ─── */}
+        {step === "preview" && result && file && (
+          <div className="flex flex-col gap-4">
+            <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold">
+                  {result.count > 0
+                    ? `${result.count} 件のテーブルが見つかりました`
+                    : "テーブルが見つかりませんでした"}
+                </h2>
+                {areas.length > 0 && (
+                  <span className="text-xs text-slate-400 bg-red-500/10 border border-red-400/20 px-3 py-1 rounded-full text-red-300">
+                    選択範囲 {areas.length} 件から抽出
+                  </span>
+                )}
+              </div>
+
+              <div className="mb-4">
+                <button
+                  onClick={handleRevise}
+                  className="text-indigo-300 hover:text-white text-sm flex items-center gap-1 transition-colors"
+                >
+                  ← 範囲選択に戻る（修正する）
+                </button>
+              </div>
+
+              {result.count > 0 ? (
+                <div className="bg-white rounded-xl p-4 text-slate-900">
+                  <TablePreview
+                    tables={result.tables}
+                    file={file}
+                    mode={mode}
+                    pages={pagesString}
+                    area={areaString}
+                    regions={regionsString}
+                    onModeChange={handleModeChange}
+                    onRevise={handleRevise}
+                    isReextracting={isReextracting}
+                  />
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl p-8 text-slate-500 text-center">
+                  <p>テーブルが見つかりませんでした。</p>
+                  <p className="text-sm mt-2">
+                    アルゴリズムを切り替えるか、「選択に戻る」で範囲を見直してください。
+                  </p>
+                  <div className="mt-4 bg-slate-50 rounded-xl p-4">
+                    <TablePreview
+                      tables={[]}
+                      file={file}
+                      mode={mode}
+                      pages={pagesString}
+                      area={areaString}
+                      regions={regionsString}
+                      onModeChange={handleModeChange}
+                      onRevise={handleRevise}
+                      isReextracting={isReextracting}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
