@@ -30,7 +30,7 @@ export default function RootLayout({
       >
         <Script
           src="https://auth.dataviz.jp/lib/supabase.js"
-          strategy="afterInteractive"
+          strategy="beforeInteractive"
         />
         <Script
           src="https://auth.dataviz.jp/lib/dataviz-auth-client.js"
