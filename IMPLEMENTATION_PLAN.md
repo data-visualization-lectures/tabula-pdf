@@ -1,181 +1,112 @@
-# Tabula ウェブツール実装計画
+# Implementation Plan: Tabula Web Tech Stack
 
-本家 Tabula はローカルインストール前提のデスクトップツールだが、本プロジェクトでは**ウェブ上で誰でも使えるPDF表抽出ツール**として提供することを目指す。
-
-## 構成概要
-
-```
-[フロントエンド: Next.js]          [バックエンド: FastAPI]
-  Vercel (無料枠)          →API→   Railway (Docker)
-  PDF アップロード UI               tabula-py + pandas
-  テーブルプレビュー                openjdk-17 同梱
-  CSV/JSON/Excel DL
-```
-
-> [!IMPORTANT]
-> **分離構成**：フロントエンドは Vercel（Next.js に最適化・無料枠）、バックエンドは Railway（Docker で Java/Python 同梱）にデプロイする。バックエンドには CORS 設定が必要。
+## 目的
+本ドキュメントは、**Tabula Web プロジェクト**の実装方針を、直近の個別バグ修正ではなく技術スタック観点で定義する。  
+前提インフラは **Vercel（Frontend） + Railway（Backend）**。
 
 ---
 
-## Proposed Changes
+## アーキテクチャ
 
-### Backend（FastAPI + tabula-py）
-
-#### [NEW] `backend/main.py`
-FastAPI アプリ本体。以下のエンドポイントを実装：
-
-| エンドポイント | メソッド | 説明 |
-|--------------|---------|------|
-| `/` | GET | ヘルスチェック |
-| `/extract` | POST | PDFをアップロードし全テーブルをJSONで返す |
-| `/download` | POST | 指定テーブルをCSV/Excel形式でダウンロード |
-
-#### [NEW] `backend/requirements.txt`
 ```
-fastapi
-uvicorn[standard]
-tabula-py
-pandas
-openpyxl
-python-multipart
+Browser
+  ↓
+Vercel (Next.js)
+  ↓ HTTPS
+Railway (API / Worker)
+  ↓
+Storage + DB + Queue (必要に応じて)
 ```
 
-#### [NEW] `backend/Dockerfile`
-```dockerfile
-FROM python:3.12-slim
+### 役割分担
+1. Frontend（Next.js / Vercel）
+- UI描画、状態管理、認証済みセッションの保持
+- アップロード操作、ジョブ開始、進捗表示、結果表示
+- 重い処理は持たず、すべてAPI経由で実行
 
-# Java（JRE）インストール
-RUN apt-get update && apt-get install -y \
-    default-jre-headless \
-    && rm -rf /var/lib/apt/lists/*
+2. Backend（FastAPI or Java API / Railway）
+- ファイル受け取り、処理実行、結果生成、ダウンロード提供
+- 同期処理と非同期ジョブ処理の境界管理
+- 入力検証、認可、監査ログ
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
+3. Data Layer（必要に応じて）
+- 永続メタデータ: PostgreSQL
+- ファイル本体: オブジェクトストレージ（S3互換）
+- 重い処理: Queue + Worker（必要な場合）
 
 ---
 
-### Frontend（Next.js）
+## 技術スタック
 
-#### [NEW] `frontend/` — Next.js プロジェクト
+### Frontend
+1. Next.js App Router
+2. TypeScript
+3. API client 層（`lib/api.ts` 等）で通信を一元化
+4. 監視イベント（例: GA, PostHog）をレイアウトで一括設定
 
-主要ページ・コンポーネント：
+### Backend（API）
+1. FastAPI（tabula-py / tabula-java 呼び出し）
+2. ファイルアップロードは multipart/form-data
+3. 処理パラメータは JSON で明示化（曖昧なフォールバックを避ける）
+4. 失敗時は 4xx/5xx を明示し、silent fallback を禁止
 
-| ファイル | 役割 |
-|---------|------|
-| `app/page.tsx` | メインページ（PDF アップロード → テーブル表示） |
-| `components/UploadZone.tsx` | ドラッグ＆ドロップ対応 PDF アップロードエリア |
-| `components/TablePreview.tsx` | 抽出テーブルのプレビュー表示（複数テーブル対応） |
-| `components/DownloadPanel.tsx` | CSV / Excel / JSON 形式でのダウンロード |
-| `lib/api.ts` | バックエンド API 呼び出しユーティリティ |
-
----
-
-### インフラ・デプロイ
-
-#### [NEW] `backend/railway.toml`
-Railway の設定ファイル。Dockerfile を指定してビルド。
-
-#### [NEW] `frontend/vercel.json`
-Vercel の設定ファイル。環境変数でバックエンド URL を指定。
-
-#### [NEW] `.env.example`
-```
-# バックエンド（Railway）
-CORS_ORIGINS=https://your-frontend.vercel.app
-
-# フロントエンド（Vercel）
-NEXT_PUBLIC_API_URL=https://your-backend.railway.app
-```
+### Infrastructure / Deploy
+1. Frontend: Vercel
+2. Backend: Railway
+3. 環境変数で接続先を管理（`NEXT_PUBLIC_API_URL`, `CORS_ORIGINS`）
+4. リリース単位で Frontend/Backend の互換性を管理
 
 ---
 
-## 機能スコープ（MVP）
+## 処理モデル（本プロジェクト）
 
-| 機能 | 優先度 |
-|------|--------|
-| PDF アップロード（最大 10MB） | ✅ Must |
-| 全テーブル自動抽出・一覧表示 | ✅ Must |
-| テーブルごとの CSV ダウンロード | ✅ Must |
-| Excel（.xlsx）ダウンロード | ✅ Must |
-| JSON ダウンロード | ✅ Must |
-| 複数ページ対応 | ✅ Must |
-| 抽出モード選択（lattice / stream） | 🟡 Should |
-| ページ範囲指定 | 🟡 Should |
-| テーブル手動選択（座標指定） | 🔴 Nice to have |
+### A. 軽量処理（同期）
+1. UI -> API 呼び出し
+2. API が即時処理
+3. UI が結果表示
 
-> [!NOTE]
-> tabula-py の抽出モードは `lattice`（罫線あり）と `stream`（罫線なし）の2種類。本家 Tabula と同様に両方選択できると精度が上がる。
+### B. 重量処理（非同期）
+1. UI -> `/jobs` で投入
+2. Worker が処理
+3. UI は `/jobs/{id}` をポーリング or push
+4. 完了後、結果ファイルをダウンロード
+
+本プロジェクトでは、ページ数・ファイルサイズ・処理時間が閾値を超える場合に B への移行を検討する。
 
 ---
 
-## ディレクトリ構成（完成形）
+## セキュリティと運用
 
-```
-tabula-pdf/
-├── backend/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── app/
-│   │   └── page.tsx
-│   ├── components/
-│   │   ├── UploadZone.tsx
-│   │   ├── TablePreview.tsx
-│   │   └── DownloadPanel.tsx
-│   ├── lib/
-│   │   └── api.ts
-│   ├── package.json
-│   └── next.config.ts
-├── railway.toml
-├── .env.example
-└── tabula_web_tool_comparison.md
-```
+1. 認証必須（公開サービスの場合）
+2. テナント分離（ユーザー単位でデータ・ファイル・ジョブを分離）
+3. ファイルサイズ制限、MIME/拡張子検証、タイムアウト設定
+4. レート制限と監査ログ
+5. 例外時は明示エラー返却（暗黙フォールバック禁止）
 
 ---
 
-## Verification Plan
+## 開発フェーズ
 
-### 1. ローカル動作確認（Docker）
+### Phase 1: Foundation
+1. Frontend/Backend の疎通
+2. アップロード・抽出・ダウンロードの最短フロー
+3. 最低限のエラーハンドリング
 
-```bash
-# バックエンドをDockerでビルド・起動
-cd backend
-docker build -t tabula-backend .
-docker run -p 8000:8000 tabula-backend
+### Phase 2: Reliability
+1. 非同期ジョブ化
+2. 冪等性、再試行、タイムアウト制御
+3. ログ・メトリクス・アラート整備
 
-# ヘルスチェック
-curl http://localhost:8000/
+### Phase 3: SaaS Readiness（必要時）
+1. 認証・課金（Stripe等）
+2. テナント分離
+3. 利用上限・プラン制御
 
-# PDFアップロードテスト（サンプルPDFを使用）
-curl -X POST http://localhost:8000/extract \
-  -F "file=@sample.pdf" | jq .
-```
+---
 
-### 2. フロントエンドローカル確認
+## Definition of Done
 
-```bash
-cd frontend
-npm install
-npm run dev
-# http://localhost:3000 でブラウザ確認
-```
-
-### 3. Railway デプロイ確認
-
-- Railway ダッシュボードでビルドログを確認
-- デプロイ後の URL に対して `/extract` エンドポイントを curl でテスト
-- フロントエンドから実際に PDF をアップロードしてテーブルが表示されることを確認
-
-### 4. ブラウザ手動テスト（MVP検証）
-
-1. サンプルPDF（表を含むもの）をアップロード
-2. テーブルが一覧表示されることを確認
-3. CSV / Excel / JSON それぞれでダウンロードし、内容を確認
-4. 複数テーブルを含むPDFで全テーブルが抽出されることを確認
+1. Frontend と Backend がバージョン互換で動作する
+2. 同一入力に対して再現性のある出力が得られる
+3. 失敗時に原因が追跡可能（ログ、HTTPステータス、エラー詳細）
+4. Vercel + Railway 上で本番相当の E2E 動作確認が完了している
