@@ -29,6 +29,14 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Script
+          src="https://auth.dataviz.jp/lib/supabase.js"
+          strategy="afterInteractive"
+        />
+        <Script
+          src="https://auth.dataviz.jp/lib/dataviz-auth-client.js"
+          strategy="afterInteractive"
+        />
+        <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-60MRJQRNK9"
           strategy="afterInteractive"
         />
