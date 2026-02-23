@@ -51,6 +51,13 @@ export default function PdfPageViewer({
 
     const containerRef = useRef<HTMLDivElement>(null);
 
+    const getResizeCursor = (handle: ResizeHandle) => {
+        if (handle === "n" || handle === "s") return "ns-resize";
+        if (handle === "e" || handle === "w") return "ew-resize";
+        if (handle === "nw" || handle === "se") return "nwse-resize";
+        return "nesw-resize";
+    };
+
     // ページ画像の読み込み
     useEffect(() => {
         let cancelled = false;
@@ -417,8 +424,8 @@ export default function PdfPageViewer({
                                                 opacity-0 group-hover:opacity-100 transition-opacity
                                                 ${h.includes("n") ? "-top-1.5" : h.includes("s") ? "-bottom-1.5" : "top-1/2 -translate-y-1/2"}
                                                 ${h.includes("w") ? "-left-1.5" : h.includes("e") ? "-right-1.5" : "left-1/2 -translate-x-1/2"}
-                                                cursor-${h}-resize
                                             `}
+                                            style={{ cursor: getResizeCursor(h as ResizeHandle) }}
                                             onMouseDown={(e) => handleMouseDownHandle(e, originalArea, i, h as ResizeHandle)}
                                         />
                                     ))}
