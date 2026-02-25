@@ -54,3 +54,31 @@ npm run dev
 - 抽出モード選択（Lattice: 罫線あり / Stream: 罫線なし）
 - ページ範囲指定
 - CSV / Excel / JSON ダウンロード
+
+## 制約（メモリとファイルサイズ）
+
+### 1) ソースコード上の制約（本リポジトリ実装）
+
+- PDF アップロード上限は **10MB** に固定（`MAX_FILE_SIZE = 10 * 1024 * 1024`）
+- 各 API で `await file.read()` を使うため、受信した PDF は一度メモリ上に展開される
+- 抽出処理では `tabula-py` 経由で `tabula-java`（JVM）が動作し、追加メモリを消費する
+- `/page-image` では `pdf2image` による画像化を行うため、ページ画像生成時はさらにメモリ使用量が増える
+
+### 2) システム（インフラ）上の制約（Railway）
+
+- 実際の抽出安定性は、Railway 上のサービスメモリ上限に依存する
+- Free: `Up to 1 vCPU / 0.5 GB RAM per service`
+- Hobby: `Up to 48 vCPU / 48 GB RAM per service`
+- Hobby 補足: `Up to 6 replicas, at 8 vCPU / 8 GB RAM per replica`
+
+> 2026-02-24 時点。Railway のプラン仕様は更新される可能性があるため、最新値は公式 Pricing を参照してください。
+
+- https://railway.com/pricing
+- https://docs.railway.com/pricing
+- https://docs.railway.com/reference/pricing/plans
+
+### 3) 運用上の目安（この実装 + Free プラン）
+
+- コード上限: **10MB**
+- 安定運用目安: **3〜5MB程度**
+- 画像多め・スキャン PDF は、同サイズでも失敗しやすい
