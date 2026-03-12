@@ -32,6 +32,13 @@ app.add_middleware(
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
+def _strip_cell_newlines(df: pd.DataFrame) -> pd.DataFrame:
+    """セル内の改行コードを除去する（ヘッダー含む）"""
+    df = df.replace(r'\r\n|\r|\n', '', regex=True)
+    df.columns = [str(c).replace('\r\n', '').replace('\r', '').replace('\n', '') for c in df.columns]
+    return df
+
+
 def _parse_area(area: str) -> list[float] | None:
     """
     "top,left,bottom,right" 形式の文字列を float リストに変換する。
@@ -273,6 +280,7 @@ async def extract_table(
     if all_dfs:
         for i, df in enumerate(all_dfs):
             df = df.fillna("")
+            df = _strip_cell_newlines(df)
             tables.append(
                 {
                     "index": i,
@@ -408,10 +416,10 @@ async def download_table(
         raise HTTPException(status_code=404, detail="指定したテーブルが見つかりません")
 
     if table_index == -1:
-        selected_dfs = [df.fillna("") for df in all_dfs]
+        selected_dfs = [_strip_cell_newlines(df.fillna("")) for df in all_dfs]
         base_name = "tables_all"
     else:
-        selected_dfs = [all_dfs[table_index].fillna("")]
+        selected_dfs = [_strip_cell_newlines(all_dfs[table_index].fillna(""))]
         base_name = f"table_{table_index + 1}"
 
     if format == "csv":
