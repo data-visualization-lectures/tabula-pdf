@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, Dispatch, SetStateAction } from "react";
 import { getPageImageUrl } from "@/lib/api";
+import { useI18n } from "@/components/I18nProvider";
 
 export type Area = {
     top: number;
@@ -44,6 +45,7 @@ export default function PdfPageViewer({
     autoDetectCurrentPage,
     autoDetectProcessedCount,
 }: PdfPageViewerProps) {
+    const { t } = useI18n();
     const [currentPage, setCurrentPage] = useState(1);
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [loadingImage, setLoadingImage] = useState(false);
@@ -335,24 +337,26 @@ export default function PdfPageViewer({
                         disabled={currentPage === 1}
                         className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm transition-all"
                     >
-                        ← 前のページ
+                        {t("page_prev")}
                     </button>
                     <span className="text-sm text-slate-300">
-                        {currentPage} / {pageCount} ページ
+                        {t("page_indicator", { current: currentPage, total: pageCount })}
                     </span>
                     <button
                         onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
                         disabled={currentPage === pageCount}
                         className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm transition-all"
                     >
-                        次のページ →
+                        {t("page_next")}
                     </button>
                     {isAutoDetecting && (
                         <span className="inline-flex items-center gap-1 text-xs text-indigo-300 animate-pulse">
                             <span className="animate-spin">⏳</span>
-                            自動検出中...（{autoDetectProcessedCount}/{pageCount}
-                            {autoDetectCurrentPage ? `・処理中: ${autoDetectCurrentPage}ページ` : ""}
-                            ）
+                            {t("page_autodetecting", {
+                                processed: autoDetectProcessedCount,
+                                total: pageCount,
+                                detail: autoDetectCurrentPage ? t("page_autodetecting_detail", { current: autoDetectCurrentPage }) : "",
+                            })}
                         </span>
                     )}
                 </div>
@@ -364,7 +368,7 @@ export default function PdfPageViewer({
                             disabled={isAutoDetecting}
                             className="px-3 py-1.5 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                            このページの選択を削除
+                            {t("page_clear_current")}
                         </button>
                     )}
                     {areas.length > 0 && (
@@ -373,7 +377,7 @@ export default function PdfPageViewer({
                             disabled={isAutoDetecting}
                             className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                            すべて削除
+                            {t("page_clear_all")}
                         </button>
                     )}
                 </div>
@@ -382,7 +386,7 @@ export default function PdfPageViewer({
             <div className="relative rounded-xl overflow-hidden border border-white/10 bg-slate-800 select-none">
                 {loadingImage ? (
                     <div className="flex items-center justify-center h-96 text-slate-400">
-                        <span className="animate-spin mr-2">⏳</span> ページを読み込み中...
+                        <span className="animate-spin mr-2">⏳</span> {t("page_loading")}
                     </div>
                 ) : imageUrl ? (
                     <div
@@ -459,13 +463,13 @@ export default function PdfPageViewer({
                     </div>
                 ) : (
                     <div className="flex items-center justify-center h-96 text-slate-400">
-                        ページの読み込みに失敗しました
+                        {t("page_load_failed")}
                     </div>
                 )}
             </div>
 
             <p className="text-xs text-slate-500 text-center">
-                💡 ドラッグで範囲選択、枠をドラッグで移動、ハンドルでリサイズが可能です。自動検出された範囲も調整できます。
+                {t("page_hint")}
             </p>
         </div>
     );

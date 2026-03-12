@@ -1,4 +1,12 @@
+import { type Locale, type TranslationKey, dictionaries, t } from "@/lib/i18n";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+let currentLocale: Locale = "ja";
+export function setApiLocale(locale: Locale) { currentLocale = locale; }
+function apiT(key: TranslationKey, params?: Record<string, string | number>) {
+  return t(dictionaries[currentLocale], key, params);
+}
 
 export type ExtractionMode = "lattice" | "stream";
 export type DownloadFormat = "csv" | "excel" | "json";
@@ -40,7 +48,7 @@ async function fetchWithRetry(
             throw e;
         }
     }
-    throw new Error("リクエストが失敗しました（リトライ上限）");
+    throw new Error(apiT("api_retry_failed"));
 }
 
 /**
@@ -56,8 +64,8 @@ export async function getPageCount(file: File): Promise<number> {
     });
 
     if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "不明なエラー" }));
-        throw new Error(err.detail || `エラー: ${res.status}`);
+        const err = await res.json().catch(() => ({ detail: apiT("api_unknown_error") }));
+        throw new Error(err.detail || apiT("api_error_status", { status: res.status }));
     }
 
     const data = await res.json();
@@ -78,8 +86,8 @@ export async function getPageImageUrl(file: File, page: number): Promise<string>
     });
 
     if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "不明なエラー" }));
-        throw new Error(err.detail || `エラー: ${res.status}`);
+        const err = await res.json().catch(() => ({ detail: apiT("api_unknown_error") }));
+        throw new Error(err.detail || apiT("api_error_status", { status: res.status }));
     }
 
     const blob = await res.blob();
@@ -110,8 +118,8 @@ export async function extractTables(
     });
 
     if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "不明なエラー" }));
-        throw new Error(err.detail || `エラー: ${res.status}`);
+        const err = await res.json().catch(() => ({ detail: apiT("api_unknown_error") }));
+        throw new Error(err.detail || apiT("api_error_status", { status: res.status }));
     }
 
     return res.json();
@@ -145,8 +153,8 @@ export async function downloadTable(
     });
 
     if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "ダウンロードに失敗しました" }));
-        throw new Error(err.detail || `エラー: ${res.status}`);
+        const err = await res.json().catch(() => ({ detail: apiT("api_download_failed") }));
+        throw new Error(err.detail || apiT("api_error_status", { status: res.status }));
     }
 
     const blob = await res.blob();
@@ -189,8 +197,8 @@ export async function detectTables(file: File, page: number): Promise<DetectResp
     if (!res.ok) {
         // 自動検出失敗は致命的ではないので空配列を返すなどハンドリングしても良いが、
         // ここではエラーを投げて UI 側で無視するか判断させる
-        const err = await res.json().catch(() => ({ detail: "自動検出に失敗しました" }));
-        throw new Error(err.detail || `エラー: ${res.status}`);
+        const err = await res.json().catch(() => ({ detail: apiT("api_detect_failed") }));
+        throw new Error(err.detail || apiT("api_error_status", { status: res.status }));
     }
 
     return res.json();

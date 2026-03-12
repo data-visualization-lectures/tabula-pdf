@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { DownloadFormat, ExtractionMode, TableData, downloadTable } from "@/lib/api";
+import { useI18n } from "@/components/I18nProvider";
 
 interface TablePreviewProps {
     tables: TableData[];
@@ -26,6 +27,7 @@ export default function TablePreview({
     onRevise,
     isReextracting = false,
 }: TablePreviewProps) {
+    const { t } = useI18n();
     const [activeIndex, setActiveIndex] = useState(0);
     const [downloading, setDownloading] = useState<DownloadFormat | null>(null);
 
@@ -36,7 +38,7 @@ export default function TablePreview({
         try {
             await downloadTable(file, -1, format, mode, pages, area, regions);
         } catch (e) {
-            alert(`ダウンロードに失敗しました: ${e instanceof Error ? e.message : e}`);
+            alert(t("table_download_failed", { error: e instanceof Error ? e.message : String(e) }));
         } finally {
             setDownloading(null);
         }
@@ -49,7 +51,7 @@ export default function TablePreview({
                 {/* アルゴリズム切替 */}
                 <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                        抽出アルゴリズム
+                        {t("table_algorithm")}
                     </span>
                     <div className="flex rounded-xl overflow-hidden border border-white/10">
                         {(["lattice", "stream"] as ExtractionMode[]).map((m) => (
@@ -69,14 +71,14 @@ export default function TablePreview({
                                 {isReextracting && mode === m ? (
                                     <span className="animate-spin inline-block mr-1">⏳</span>
                                 ) : null}
-                                {m === "lattice" ? "🔲 Lattice（罫線あり）" : "〰 Stream（罫線なし）"}
+                                {m === "lattice" ? t("table_lattice") : t("table_stream")}
                             </button>
                         ))}
                     </div>
                     <p className="text-xs text-slate-500">
                         {mode === "lattice"
-                            ? "縦横の罫線（セル境界）を使って表構造を復元。Excel由来の格子型PDF向け。"
-                            : "文字の位置と間隔（空白）から列境界を推定。罫線のない表やテキスト中心PDF向け。"}
+                            ? t("table_lattice_desc")
+                            : t("table_stream_desc")}
                     </p>
                 </div>
 
@@ -85,14 +87,14 @@ export default function TablePreview({
                     onClick={onRevise}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-slate-300 text-sm font-medium transition-all"
                 >
-                    ← 選択に戻る
+                    {t("table_back")}
                 </button>
             </div>
 
             {/* テーブル選択タブ */}
             {tables.length > 1 && (
                 <div className="flex flex-wrap gap-2">
-                    {tables.map((t, i) => (
+                    {tables.map((tbl, i) => (
                         <button
                             key={i}
                             onClick={() => setActiveIndex(i)}
@@ -104,9 +106,9 @@ export default function TablePreview({
                                 }
                             `}
                         >
-                            テーブル {i + 1}
+                            {t("table_tab", { index: i + 1 })}
                             <span className="ml-1.5 text-xs opacity-70">
-                                {t.rows}行 × {t.columns}列
+                                {t("table_size", { rows: tbl.rows, columns: tbl.columns })}
                             </span>
                         </button>
                     ))}
@@ -124,7 +126,7 @@ export default function TablePreview({
                                         key={i}
                                         className="px-4 py-2.5 text-left font-semibold whitespace-nowrap border-r border-indigo-500 last:border-r-0"
                                     >
-                                        {h || `列 ${i + 1}`}
+                                        {h || t("table_column_default", { index: i + 1 })}
                                     </th>
                                 ))}
                             </tr>
@@ -150,14 +152,14 @@ export default function TablePreview({
                 </div>
             ) : (
                 <div className="text-center py-12 text-slate-400">
-                    テーブルが見つかりませんでした。アルゴリズムを切り替えるか、選択範囲を見直してください。
+                    {t("table_empty")}
                 </div>
             )}
 
             {/* ダウンロードパネル */}
             {activeTable && (
                 <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-sm font-medium text-slate-600">全ページ一括ダウンロード：</span>
+                    <span className="text-sm font-medium text-slate-600">{t("table_download_label")}</span>
                     {(["csv", "excel", "json"] as DownloadFormat[]).map((fmt) => (
                         <button
                             key={fmt}

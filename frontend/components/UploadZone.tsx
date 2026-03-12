@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useI18n } from "@/components/I18nProvider";
 
 interface UploadZoneProps {
     onFileSelect: (file: File) => void;
@@ -8,6 +9,7 @@ interface UploadZoneProps {
 }
 
 export default function UploadZone({ onFileSelect, disabled }: UploadZoneProps) {
+    const { t } = useI18n();
     const [isDragging, setIsDragging] = useState(false);
 
     const handleDrop = useCallback(
@@ -56,10 +58,10 @@ export default function UploadZone({ onFileSelect, disabled }: UploadZoneProps) 
             <div className="text-5xl">📄</div>
             <div>
                 <p className="text-lg font-semibold text-slate-700">
-                    PDF をドラッグ＆ドロップ
+                    {t("upload_drag")}
                 </p>
                 <p className="text-sm text-slate-500 mt-1">
-                    または クリックしてファイルを選択（最大 10MB）
+                    {t("upload_click")}
                 </p>
             </div>
         </div>

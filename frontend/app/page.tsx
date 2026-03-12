@@ -5,6 +5,7 @@ import UploadZone from "@/components/UploadZone";
 import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
 import { ExtractResponse, ExtractionMode, detectTables, extractTables, getPageCount } from "@/lib/api";
+import { useI18n } from "@/components/I18nProvider";
 
 type Step = "upload" | "select" | "preview";
 
@@ -28,6 +29,7 @@ function areasToPages(areas: Area[]): string {
 }
 
 export default function Home() {
+  const { t } = useI18n();
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState(0);
@@ -70,7 +72,7 @@ export default function Home() {
       setPageCount(count);
       setStep("select");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "PDF の読み込みに失敗しました");
+      setError(e instanceof Error ? e.message : t("api_pdf_load_failed"));
     } finally {
       setLoading(false);
     }
@@ -90,7 +92,7 @@ export default function Home() {
       setResult(data);
       setStep("preview");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "抽出に失敗しました");
+      setError(e instanceof Error ? e.message : t("api_extract_failed"));
     } finally {
       setLoading(false);
     }
@@ -109,7 +111,7 @@ export default function Home() {
       const data = await extractTables(file, newMode, pages, area, regions);
       setResult(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "再抽出に失敗しました");
+      setError(e instanceof Error ? e.message : t("api_reextract_failed"));
     } finally {
       setIsReextracting(false);
     }
@@ -141,9 +143,9 @@ export default function Home() {
 
   // ステップインジケーター
   const steps: { key: Step; label: string }[] = [
-    { key: "upload", label: "① アップロード" },
-    { key: "select", label: "② 範囲選択" },
-    { key: "preview", label: "③ プレビュー & エクスポート" },
+    { key: "upload", label: t("step_upload") },
+    { key: "select", label: t("step_select") },
+    { key: "preview", label: t("step_preview") },
   ];
 
   const handleAreasChange = (nextAreas: React.SetStateAction<Area[]>) => {
@@ -223,7 +225,7 @@ export default function Home() {
             <span className="text-2xl">📊</span>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Tabula Web</h1>
-              <p className="text-xs text-slate-400">PDF から表データを抽出</p>
+              <p className="text-xs text-slate-400">{t("header_subtitle")}</p>
             </div>
           </div>
           {step !== "upload" && (
@@ -231,7 +233,7 @@ export default function Home() {
               onClick={handleReset}
               className="text-slate-400 hover:text-white text-sm transition-colors"
             >
-              ✕ 最初からやり直す
+              {t("header_reset")}
             </button>
           )}
         </div>
@@ -312,16 +314,16 @@ export default function Home() {
           <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
             <div className="text-center">
               <h2 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-300 to-cyan-300 bg-clip-text text-transparent">
-                PDF の表を一瞬で抽出
+                {t("upload_heading")}
               </h2>
               <p className="mt-2 text-slate-400">
-                PDF をアップロードして、抽出範囲を選択するだけ
+                {t("upload_subheading")}
               </p>
             </div>
             <UploadZone onFileSelect={handleFileSelect} disabled={loading} />
             {loading && (
               <p className="text-center text-slate-400 text-sm animate-pulse">
-                ⏳ PDF を読み込んでいます...
+                {t("upload_loading")}
               </p>
             )}
           </div>
@@ -332,7 +334,7 @@ export default function Home() {
           <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-bold">抽出範囲を選択</h2>
+                <h2 className="text-xl font-bold">{t("select_heading")}</h2>
                 <p className="text-sm text-slate-400 mt-1">
                   📄 {file.name}
                 </p>
@@ -340,11 +342,11 @@ export default function Home() {
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 {areas.length > 0 ? (
                   <span className="px-3 py-1 rounded-full bg-red-500/20 border border-red-400/30 text-red-300">
-                    {areas.length} 件の範囲を選択中
+                    {t("select_areas_count", { count: areas.length })}
                   </span>
                 ) : (
                   <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
-                    範囲未選択（全体を抽出）
+                    {t("select_no_areas")}
                   </span>
                 )}
               </div>
@@ -363,7 +365,7 @@ export default function Home() {
             {isAutoDetecting ? (
               <div className="w-full py-3.5 rounded-xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-200 text-sm flex items-center justify-center gap-2">
                 <span className="animate-spin">⏳</span>
-                自動範囲選択中...（{processedPageCount}/{pageCount} ページ）
+                {t("select_autodetecting", { processed: processedPageCount, total: pageCount })}
               </div>
             ) : (
               <button
@@ -381,14 +383,14 @@ export default function Home() {
                 {loading ? (
                   <>
                     <span className="animate-spin">⏳</span>
-                    抽出中...（初回は起動待ちで10〜20秒かかる場合があります）
+                    {t("select_extracting")}
                   </>
                 ) : (
                   <>
                     <span>🔍</span>
                     {areas.length > 0
-                      ? `選択範囲（全${areas.length}件）を抽出してプレビュー`
-                      : "全体を抽出してプレビュー"}
+                      ? t("select_extract_selected", { count: areas.length })
+                      : t("select_extract_all")}
                   </>
                 )}
               </button>
@@ -403,12 +405,12 @@ export default function Home() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-bold">
                   {result.count > 0
-                    ? `${result.count} 件のテーブルが見つかりました`
-                    : "テーブルが見つかりませんでした"}
+                    ? t("preview_tables_found", { count: result.count })
+                    : t("preview_no_tables")}
                 </h2>
                 {areas.length > 0 && (
                   <span className="text-xs text-slate-400 bg-red-500/10 border border-red-400/20 px-3 py-1 rounded-full text-red-300">
-                    選択範囲 {areas.length} 件から抽出
+                    {t("preview_extracted_from", { count: areas.length })}
                   </span>
                 )}
               </div>
@@ -418,7 +420,7 @@ export default function Home() {
                   onClick={handleRevise}
                   className="text-indigo-300 hover:text-white text-sm flex items-center gap-1 transition-colors"
                 >
-                  ← 範囲選択に戻る（修正する）
+                  {t("preview_back")}
                 </button>
               </div>
 
@@ -438,9 +440,9 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="bg-white rounded-xl p-8 text-slate-500 text-center">
-                  <p>テーブルが見つかりませんでした。</p>
+                  <p>{t("preview_no_tables_detail")}</p>
                   <p className="text-sm mt-2">
-                    アルゴリズムを切り替えるか、「選択に戻る」で範囲を見直してください。
+                    {t("preview_no_tables_hint")}
                   </p>
                   <div className="mt-4 bg-slate-50 rounded-xl p-4">
                     <TablePreview
