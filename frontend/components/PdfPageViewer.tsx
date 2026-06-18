@@ -1,16 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, Dispatch, SetStateAction } from "react";
-import { getPageImageUrl } from "@/lib/api";
+import { useCallback, useRef, useState, Dispatch, SetStateAction } from "react";
+import type { Area } from "@/lib/pdfAreas";
 import { useI18n } from "@/components/I18nProvider";
-
-export type Area = {
-    top: number;
-    left: number;
-    bottom: number;
-    right: number;
-    page: number;
-};
+import { usePdfPageImage } from "@/hooks/usePdfPageImage";
 
 type DragType = "create" | "move" | "resize";
 type ResizeHandle = "nw" | "ne" | "sw" | "se" | "n" | "e" | "s" | "w";
@@ -171,9 +164,8 @@ export default function PdfPageViewer({
 }: PdfPageViewerProps) {
     const { t } = useI18n();
     const [currentPage, setCurrentPage] = useState(1);
-    const [imageUrl, setImageUrl] = useState<string | null>(null);
-    const [loadingImage, setLoadingImage] = useState(false);
     const [drag, setDrag] = useState<DragState | null>(null);
+    const { imageUrl, loadingImage } = usePdfPageImage(pdfFile, currentPage);
 
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -183,35 +175,6 @@ export default function PdfPageViewer({
         if (handle === "nw" || handle === "se") return "nwse-resize";
         return "nesw-resize";
     };
-
-    // ページ画像の読み込み
-    useEffect(() => {
-        let cancelled = false;
-        let prevUrl: string | null = null;
-
-        const load = async () => {
-            setLoadingImage(true);
-            setImageUrl(null);
-            try {
-                const url = await getPageImageUrl(pdfFile, currentPage);
-                if (!cancelled) {
-                    if (prevUrl) URL.revokeObjectURL(prevUrl);
-                    prevUrl = url;
-                    setImageUrl(url);
-                }
-            } catch (e) {
-                console.error("ページ画像の取得に失敗しました", e);
-            } finally {
-                if (!cancelled) setLoadingImage(false);
-            }
-        };
-
-        load();
-        return () => {
-            cancelled = true;
-            if (prevUrl) URL.revokeObjectURL(prevUrl);
-        };
-    }, [pdfFile, currentPage]);
 
     // 現在ページの選択枠
     const currentAreas = areas.filter((a) => a.page === currentPage);

@@ -1,7 +1,7 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
-import type { Area } from "@/components/PdfPageViewer";
 import { type ExtractResponse, type ExtractionMode, extractTables } from "@/lib/api";
 import { buildExtractionPayload } from "@/lib/extractionPayload";
+import type { Area } from "@/lib/pdfAreas";
 
 type UsePdfExtractionActionsOptions = {
   file: File | null;
@@ -73,8 +73,6 @@ export function usePdfExtractionActions({
     loading,
     error,
     isReextracting,
-    setLoading,
-    setError,
     clearError,
     handleExtract,
     handleModeChange,

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type SetStateAction } from "react";
-import type { Area } from "@/components/PdfPageViewer";
+import type { Area } from "@/lib/pdfAreas";
 
 type UsePdfAreasOptions = {
   onAreasChanged?: () => void;
