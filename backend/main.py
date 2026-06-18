@@ -1,6 +1,8 @@
 import io
+import json
 import os
 import tempfile
+from dataclasses import dataclass
 from typing import Literal
 
 import pandas as pd
@@ -9,7 +11,6 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-import json
 from pdf2image import convert_from_path
 from pypdf import PdfReader
 
@@ -30,6 +31,13 @@ app.add_middleware(
 )
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@dataclass(frozen=True)
+class PageGeometry:
+    width_pt: float
+    height_pt: float
+    rotation: int
 
 
 def _strip_cell_newlines(df: pd.DataFrame) -> pd.DataFrame:
@@ -57,6 +65,51 @@ def _parse_area(area: str) -> list[float] | None:
             status_code=400,
             detail="area は 'top,left,bottom,right' の形式で指定してください（例: 100,50,400,500）",
         )
+
+
+def _get_page_geometry(reader: PdfReader, page_number: int) -> PageGeometry:
+    """表示上のページ寸法を Tabula 座標系の基準値として取得する。"""
+    if page_number < 1 or page_number > len(reader.pages):
+        raise HTTPException(status_code=404, detail=f"ページ {page_number} が見つかりません")
+
+    pdf_page = reader.pages[page_number - 1]
+    rotation = int(pdf_page.get('/Rotate', 0) or 0) % 360
+    width_pt = float(pdf_page.cropbox.width)
+    height_pt = float(pdf_page.cropbox.height)
+
+    if rotation in (90, 270):
+        width_pt, height_pt = height_pt, width_pt
+
+    return PageGeometry(width_pt=width_pt, height_pt=height_pt, rotation=rotation)
+
+
+def _clamp_ratio(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
+def _region_to_tabula_area(region: dict, geometry: PageGeometry) -> list[float]:
+    """0.0-1.0 の相対領域を Tabula の top,left,bottom,right pt に変換する。"""
+    top = float(region.get("top", 0)) * geometry.height_pt
+    left = float(region.get("left", 0)) * geometry.width_pt
+    bottom = float(region.get("bottom", 0)) * geometry.height_pt
+    right = float(region.get("right", 0)) * geometry.width_pt
+    return [top, left, bottom, right]
+
+
+def _tabula_table_to_region(table: dict, geometry: PageGeometry, page_number: int) -> dict:
+    """Tabula JSON の絶対座標をフロントエンド用の相対領域に変換する。"""
+    top = float(table.get("top", 0))
+    left = float(table.get("left", 0))
+    width = float(table.get("width", 0))
+    height = float(table.get("height", 0))
+
+    return {
+        "top": _clamp_ratio(top / geometry.height_pt),
+        "left": _clamp_ratio(left / geometry.width_pt),
+        "bottom": _clamp_ratio((top + height) / geometry.height_pt),
+        "right": _clamp_ratio((left + width) / geometry.width_pt),
+        "page": page_number,
+    }
 
 
 @app.get("/")
@@ -192,29 +245,13 @@ async def extract_table(
             # ページごとに Tabula を実行
             # Tabula-py の area は top, left, bottom, right (points)
             for p_num, r_list in sorted(page_regions.items()):
-                # ページサイズ取得 (pypdf は 0-indexed)
-                if p_num - 1 < len(reader.pages):
-                    pdf_page = reader.pages[p_num - 1]
-                    rotation = pdf_page.get('/Rotate', 0)
-                    # MediaBox ではなく CropBox (表示領域) を使用する
-                    w_pt = float(pdf_page.cropbox.width)
-                    h_pt = float(pdf_page.cropbox.height)
-                    if rotation in [90, 270]:
-                        w_pt, h_pt = h_pt, w_pt
-                else:
-                    # ページ番号が範囲外の場合はスキップするか、デフォルトサイズ仮定など
-                    continue
+                geometry = _get_page_geometry(reader, p_num)
 
                 areas_pt = []
                 for r in r_list:
-                    # 0.0-1.0 の割合をポイントに変換
-                    top = float(r.get("top", 0)) * h_pt
-                    left = float(r.get("left", 0)) * w_pt
-                    bottom = float(r.get("bottom", 0)) * h_pt
-                    right = float(r.get("right", 0)) * w_pt
-                    areas_pt.append([top, left, bottom, right])
+                    areas_pt.append(_region_to_tabula_area(r, geometry))
                 
-                # print(f"[DEBUG] Page {p_num}: Rotation={rotation}, W={w_pt}, H={h_pt}")
+                # print(f"[DEBUG] Page {p_num}: Rotation={geometry.rotation}, W={geometry.width_pt}, H={geometry.height_pt}")
                 # print(f"[DEBUG] Areas PT: {areas_pt}")
 
                 if areas_pt:
@@ -270,6 +307,8 @@ async def extract_table(
             if dfs:
                 all_dfs.extend(dfs)
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
     finally:
@@ -338,23 +377,11 @@ async def download_table(
                 page_regions[p].append(r)
 
             for p_num, r_list in sorted(page_regions.items()):
-                if p_num - 1 < len(reader.pages):
-                    pdf_page = reader.pages[p_num - 1]
-                    rotation = pdf_page.get('/Rotate', 0)
-                    w_pt = float(pdf_page.cropbox.width)
-                    h_pt = float(pdf_page.cropbox.height)
-                    if rotation in [90, 270]:
-                        w_pt, h_pt = h_pt, w_pt
-                else:
-                    continue
+                geometry = _get_page_geometry(reader, p_num)
 
                 areas_pt = []
                 for r in r_list:
-                    top = float(r.get("top", 0)) * h_pt
-                    left = float(r.get("left", 0)) * w_pt
-                    bottom = float(r.get("bottom", 0)) * h_pt
-                    right = float(r.get("right", 0)) * w_pt
-                    areas_pt.append([top, left, bottom, right])
+                    areas_pt.append(_region_to_tabula_area(r, geometry))
 
                 if areas_pt:
                     dfs = tabula.read_pdf(
@@ -404,6 +431,8 @@ async def download_table(
             if dfs:
                 all_dfs.extend(dfs)
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
     finally:
@@ -492,15 +521,8 @@ async def detect_tables(
 
     try:
         # 1. pypdf でページサイズ（ポイント単位）を取得
-        from pypdf import PdfReader
-        
         reader = PdfReader(tmp_path)
-        if page < 1 or page > len(reader.pages):
-            raise HTTPException(status_code=404, detail=f"ページ {page} が見つかりません")
-            
-        pdf_page = reader.pages[page - 1]
-        width_pt = float(pdf_page.mediabox.width)
-        height_pt = float(pdf_page.mediabox.height)
+        geometry = _get_page_geometry(reader, page)
 
         # 2. tabula-py で表領域を検出 (guess=True, output_format="json")
         # JSON output contain list of tables with absolute coordinates (points)
@@ -515,6 +537,8 @@ async def detect_tables(
                            # But explicit mode might be needed? 
                            # Let's trust default guess behavior for detection.
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
     finally:
@@ -524,25 +548,7 @@ async def detect_tables(
     detected_areas = []
     if tables:
         for t in tables:
-            # tabula json format properties: top, left, width, height (in points)
-            t_top = t.get("top", 0)
-            t_left = t.get("left", 0)
-            t_width = t.get("width", 0)
-            t_height = t.get("height", 0)
-            
-            # calculate bottom/right
-            t_bottom = t_top + t_height
-            t_right = t_left + t_width
-            
-            # normalize to 0.0 - 1.0
-            area = {
-                "top": min(max(t_top / height_pt, 0), 1),
-                "left": min(max(t_left / width_pt, 0), 1),
-                "bottom": min(max(t_bottom / height_pt, 0), 1),
-                "right": min(max(t_right / width_pt, 0), 1),
-                "page": page
-            }
-            detected_areas.append(area)
+            detected_areas.append(_tabula_table_to_region(t, geometry, page))
 
     return {"areas": detected_areas, "page": page}
 
