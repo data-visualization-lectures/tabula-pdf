@@ -4,9 +4,10 @@ import { useState, useRef, useCallback } from "react";
 import UploadZone from "@/components/UploadZone";
 import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
-import { ExtractResponse, ExtractionMode, extractTables, getPageCount } from "@/lib/api";
+import { ExtractResponse, ExtractionMode, getPageCount } from "@/lib/api";
 import { buildExtractionPayload } from "@/lib/extractionPayload";
 import { useAutoDetectAreas } from "@/hooks/useAutoDetectAreas";
+import { usePdfExtractionActions } from "@/hooks/usePdfExtractionActions";
 import { useI18n } from "@/components/I18nProvider";
 
 type Step = "upload" | "select" | "preview";
@@ -21,14 +22,22 @@ export default function Home() {
 
   const [mode, setMode] = useState<ExtractionMode>("lattice");
   const [result, setResult] = useState<ExtractResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isReextracting, setIsReextracting] = useState(false);
 
   const handleAutoDetectedAreas = useCallback((detectedAreas: Area[]) => {
     areasRef.current = detectedAreas;
     setAreas(detectedAreas);
     setResult(null);
+  }, []);
+
+  const getCurrentAreas = useCallback(() => areasRef.current, []);
+
+  const handleExtracted = useCallback((data: ExtractResponse) => {
+    setResult(data);
+    setStep("preview");
+  }, []);
+
+  const handleReextracted = useCallback((data: ExtractResponse) => {
+    setResult(data);
   }, []);
 
   const {
@@ -40,6 +49,29 @@ export default function Home() {
     file,
     pageCount,
     onAreasDetected: handleAutoDetectedAreas,
+  });
+
+  const {
+    loading,
+    error,
+    isReextracting,
+    setLoading,
+    setError,
+    clearError,
+    handleExtract,
+    handleModeChange,
+  } = usePdfExtractionActions({
+    file,
+    mode,
+    setMode,
+    isAutoDetecting,
+    getAreas: getCurrentAreas,
+    onExtracted: handleExtracted,
+    onReextracted: handleReextracted,
+    messages: {
+      extractFailed: t("api_extract_failed"),
+      reextractFailed: t("api_reextract_failed"),
+    },
   });
 
   // Screen A → B
@@ -61,46 +93,11 @@ export default function Home() {
     }
   };
 
-  // Screen B → C（抽出実行）
-  const handleExtract = async () => {
-    if (!file || isAutoDetecting) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const currentAreas = areasRef.current;
-      const payload = buildExtractionPayload(currentAreas);
-      const data = await extractTables(file, mode, payload.pages, payload.area, payload.regions);
-      setResult(data);
-      setStep("preview");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("api_extract_failed"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Screen C: アルゴリズム切替 → 再抽出
-  const handleModeChange = async (newMode: ExtractionMode) => {
-    if (!file || newMode === mode) return;
-    setMode(newMode);
-    setIsReextracting(true);
-    try {
-      const currentAreas = areasRef.current;
-      const payload = buildExtractionPayload(currentAreas);
-      const data = await extractTables(file, newMode, payload.pages, payload.area, payload.regions);
-      setResult(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("api_reextract_failed"));
-    } finally {
-      setIsReextracting(false);
-    }
-  };
-
   // Screen C → B（選択に戻る）
   const handleRevise = () => {
     setStep("select");
     setResult(null);
-    setError(null);
+    clearError();
   };
 
   // 全リセット
@@ -110,7 +107,7 @@ export default function Home() {
     setAreas([]);
     areasRef.current = [];
     setResult(null);
-    setError(null);
+    clearError();
     setMode("lattice");
     setPageCount(1);
     resetAutoDetect();
