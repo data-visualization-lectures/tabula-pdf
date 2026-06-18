@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import UploadZone from "@/components/UploadZone";
-import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
+import PdfPageViewer from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
 import { ExtractResponse, ExtractionMode, getPageCount } from "@/lib/api";
 import { buildExtractionPayload } from "@/lib/extractionPayload";
 import { useAutoDetectAreas } from "@/hooks/useAutoDetectAreas";
+import { usePdfAreas } from "@/hooks/usePdfAreas";
 import { usePdfExtractionActions } from "@/hooks/usePdfExtractionActions";
 import { useI18n } from "@/components/I18nProvider";
 
@@ -17,19 +18,21 @@ export default function Home() {
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState(0);
-  const [areas, setAreas] = useState<Area[]>([]);
-  const areasRef = useRef<Area[]>([]);
 
   const [mode, setMode] = useState<ExtractionMode>("lattice");
   const [result, setResult] = useState<ExtractResponse | null>(null);
 
-  const handleAutoDetectedAreas = useCallback((detectedAreas: Area[]) => {
-    areasRef.current = detectedAreas;
-    setAreas(detectedAreas);
+  const invalidateResult = useCallback(() => {
     setResult(null);
   }, []);
 
-  const getCurrentAreas = useCallback(() => areasRef.current, []);
+  const {
+    areas,
+    clearAreas,
+    getCurrentAreas,
+    handleAreasChange,
+    replaceAreas,
+  } = usePdfAreas({ onAreasChanged: invalidateResult });
 
   const handleExtracted = useCallback((data: ExtractResponse) => {
     setResult(data);
@@ -48,7 +51,7 @@ export default function Home() {
   } = useAutoDetectAreas({
     file,
     pageCount,
-    onAreasDetected: handleAutoDetectedAreas,
+    onAreasDetected: replaceAreas,
   });
 
   const {
@@ -78,8 +81,7 @@ export default function Home() {
   const handleFileSelect = async (f: File) => {
     setFile(f);
     setResult(null);
-    setAreas([]);
-    areasRef.current = [];
+    clearAreas();
     resetAutoDetect();
     setLoading(true);
     try {
@@ -104,8 +106,7 @@ export default function Home() {
   const handleReset = () => {
     setStep("upload");
     setFile(null);
-    setAreas([]);
-    areasRef.current = [];
+    clearAreas();
     setResult(null);
     clearError();
     setMode("lattice");
@@ -120,17 +121,7 @@ export default function Home() {
     { key: "preview", label: t("step_preview") },
   ];
 
-  const handleAreasChange = (nextAreas: React.SetStateAction<Area[]>) => {
-    const resolved = typeof nextAreas === "function"
-      ? (nextAreas as (prev: Area[]) => Area[])(areasRef.current)
-      : nextAreas;
-    areasRef.current = resolved;
-    setAreas(resolved);
-    // 範囲が更新されたら、既存の抽出結果は無効化する
-    setResult(null);
-  };
-
-  const extractionPayload = buildExtractionPayload(areasRef.current);
+  const extractionPayload = buildExtractionPayload(getCurrentAreas());
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white">
