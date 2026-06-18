@@ -12,7 +12,6 @@ interface TablePreviewProps {
     area?: string;
     regions?: string;
     onModeChange: (mode: ExtractionMode) => void;
-    onRevise: () => void;
     isReextracting?: boolean;
 }
 
@@ -24,7 +23,6 @@ export default function TablePreview({
     area = "",
     regions = "[]",
     onModeChange,
-    onRevise,
     isReextracting = false,
 }: TablePreviewProps) {
     const { t } = useI18n();
@@ -46,8 +44,8 @@ export default function TablePreview({
 
     return (
         <div className="flex flex-col gap-6">
-            {/* Screen C ヘッダー：アルゴリズム切替 + 戻るボタン */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Screen C ヘッダー：アルゴリズム切替 */}
+            <div className="flex flex-col items-start gap-4">
                 {/* アルゴリズム切替 */}
                 <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
@@ -81,14 +79,6 @@ export default function TablePreview({
                             : t("table_stream_desc")}
                     </p>
                 </div>
-
-                {/* 選択に戻るボタン */}
-                <button
-                    onClick={onRevise}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-slate-300 text-sm font-medium transition-all"
-                >
-                    {t("table_back")}
-                </button>
             </div>
 
             {/* テーブル選択タブ */}

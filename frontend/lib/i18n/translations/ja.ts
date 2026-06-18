@@ -54,7 +54,6 @@ export const ja = {
   table_stream: "〰 Stream（罫線なし）",
   table_lattice_desc: "縦横の罫線（セル境界）を使って表構造を復元。Excel由来の格子型PDF向け。",
   table_stream_desc: "文字の位置と間隔（空白）から列境界を推定。罫線のない表やテキスト中心PDF向け。",
-  table_back: "← 選択に戻る",
   table_tab: "テーブル {index}",
   table_size: "{rows}行 × {columns}列",
   table_column_default: "列 {index}",

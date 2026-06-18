@@ -353,7 +353,6 @@ export default function Home() {
                     area={extractionPayload.area}
                     regions={extractionPayload.regions}
                     onModeChange={handleModeChange}
-                    onRevise={handleRevise}
                     isReextracting={isReextracting}
                   />
                 </div>
@@ -372,7 +371,6 @@ export default function Home() {
                       area={extractionPayload.area}
                       regions={extractionPayload.regions}
                       onModeChange={handleModeChange}
-                      onRevise={handleRevise}
                       isReextracting={isReextracting}
                     />
                   </div>

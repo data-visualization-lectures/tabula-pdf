@@ -56,7 +56,6 @@ export const en: TranslationKeys = {
   table_stream: "〰 Stream (no borders)",
   table_lattice_desc: "Reconstructs table structure using cell borders. Best for grid-style PDFs from Excel.",
   table_stream_desc: "Estimates column boundaries from character positions and spacing. Best for borderless tables.",
-  table_back: "← Back to selection",
   table_tab: "Table {index}",
   table_size: "{rows} rows × {columns} cols",
   table_column_default: "Column {index}",
