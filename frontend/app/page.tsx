@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import UploadZone from "@/components/UploadZone";
 import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
-import { ExtractResponse, ExtractionMode, detectTables, extractTables, getPageCount } from "@/lib/api";
+import { ExtractResponse, ExtractionMode, extractTables, getPageCount } from "@/lib/api";
 import { buildExtractionPayload } from "@/lib/extractionPayload";
+import { useAutoDetectAreas } from "@/hooks/useAutoDetectAreas";
 import { useI18n } from "@/components/I18nProvider";
 
 type Step = "upload" | "select" | "preview";
@@ -17,25 +18,29 @@ export default function Home() {
   const [pageCount, setPageCount] = useState(0);
   const [areas, setAreas] = useState<Area[]>([]);
   const areasRef = useRef<Area[]>([]);
-  /* Policy A: 履歴を useRef 化 */
-  const processedPages = useRef<Set<number>>(new Set());
-
-  /* Policy A: onProcessPage を useCallback 化して安定化 */
-  const handleProcessPage = useCallback((page: number) => {
-    if (!processedPages.current.has(page)) {
-      processedPages.current.add(page);
-      setProcessedPageCount(processedPages.current.size);
-    }
-  }, []);
 
   const [mode, setMode] = useState<ExtractionMode>("lattice");
   const [result, setResult] = useState<ExtractResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isReextracting, setIsReextracting] = useState(false);
-  const [isAutoDetecting, setIsAutoDetecting] = useState(false);
-  const [autoDetectCurrentPage, setAutoDetectCurrentPage] = useState<number | null>(null);
-  const [processedPageCount, setProcessedPageCount] = useState(0);
+
+  const handleAutoDetectedAreas = useCallback((detectedAreas: Area[]) => {
+    areasRef.current = detectedAreas;
+    setAreas(detectedAreas);
+    setResult(null);
+  }, []);
+
+  const {
+    isAutoDetecting,
+    autoDetectCurrentPage,
+    processedPageCount,
+    resetAutoDetect,
+  } = useAutoDetectAreas({
+    file,
+    pageCount,
+    onAreasDetected: handleAutoDetectedAreas,
+  });
 
   // Screen A → B
   const handleFileSelect = async (f: File) => {
@@ -43,11 +48,7 @@ export default function Home() {
     setResult(null);
     setAreas([]);
     areasRef.current = [];
-    setIsAutoDetecting(false);
-    setAutoDetectCurrentPage(null);
-    setProcessedPageCount(0);
-    // Policy A: リセット経路の網羅
-    processedPages.current.clear();
+    resetAutoDetect();
     setLoading(true);
     try {
       const count = await getPageCount(f);
@@ -112,11 +113,7 @@ export default function Home() {
     setError(null);
     setMode("lattice");
     setPageCount(1);
-    setIsAutoDetecting(false);
-    setAutoDetectCurrentPage(null);
-    setProcessedPageCount(0);
-    // Policy A: リセット経路の網羅
-    processedPages.current.clear();
+    resetAutoDetect();
   };
 
   // ステップインジケーター
@@ -135,54 +132,6 @@ export default function Home() {
     // 範囲が更新されたら、既存の抽出結果は無効化する
     setResult(null);
   };
-
-  useEffect(() => {
-    if (!file || pageCount <= 0) return;
-
-    let cancelled = false;
-
-    const runAutoDetectAllPages = async () => {
-      setIsAutoDetecting(true);
-      setAutoDetectCurrentPage(null);
-      setProcessedPageCount(0);
-      processedPages.current.clear();
-      const collectedAreas: Area[] = [];
-
-      for (let p = 1; p <= pageCount; p++) {
-        if (cancelled) return;
-        setAutoDetectCurrentPage(p);
-
-        try {
-          const res = await detectTables(file, p);
-          if (cancelled) return;
-
-          if (res.areas.length > 0) {
-            collectedAreas.push(...res.areas);
-          }
-        } catch (e) {
-          if (!cancelled) {
-            console.warn(`[AutoDetect] Failed: Page ${p}`, e);
-          }
-        } finally {
-          handleProcessPage(p);
-        }
-      }
-
-      if (!cancelled) {
-        areasRef.current = collectedAreas;
-        setAreas(collectedAreas);
-        setResult(null);
-        setAutoDetectCurrentPage(null);
-        setIsAutoDetecting(false);
-      }
-    };
-
-    runAutoDetectAllPages();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [file, pageCount, handleProcessPage]);
 
   const extractionPayload = buildExtractionPayload(areasRef.current);
 
