@@ -15,6 +15,9 @@ export type Area = {
 type DragType = "create" | "move" | "resize";
 type ResizeHandle = "nw" | "ne" | "sw" | "se" | "n" | "e" | "s" | "w";
 
+const MIN_AREA_SIZE = 0.01;
+const RESIZE_HANDLES: ResizeHandle[] = ["nw", "ne", "sw", "se", "n", "e", "s", "w"];
+
 interface DragState {
     type: DragType;
     startX: number;
@@ -34,6 +37,127 @@ interface PdfPageViewerProps {
     isAutoDetecting: boolean;
     autoDetectCurrentPage: number | null;
     autoDetectProcessedCount: number;
+}
+
+function clampRatio(value: number) {
+    return Math.max(0, Math.min(1, value));
+}
+
+function createAreaFromDrag(drag: DragState, currentPage: number): Area | null {
+    const minX = Math.min(drag.startX, drag.currentX);
+    const maxX = Math.max(drag.startX, drag.currentX);
+    const minY = Math.min(drag.startY, drag.currentY);
+    const maxY = Math.max(drag.startY, drag.currentY);
+
+    if (maxX - minX <= MIN_AREA_SIZE || maxY - minY <= MIN_AREA_SIZE) {
+        return null;
+    }
+
+    return {
+        top: minY,
+        left: minX,
+        bottom: maxY,
+        right: maxX,
+        page: currentPage,
+    };
+}
+
+function moveArea(area: Area, dx: number, dy: number): Area {
+    const width = area.right - area.left;
+    const height = area.bottom - area.top;
+
+    let left = area.left + dx;
+    let top = area.top + dy;
+
+    left = Math.max(0, Math.min(1 - width, left));
+    top = Math.max(0, Math.min(1 - height, top));
+
+    return {
+        ...area,
+        top,
+        left,
+        bottom: top + height,
+        right: left + width,
+    };
+}
+
+function resizeArea(area: Area, dx: number, dy: number, handle: ResizeHandle): Area {
+    let { top, left, bottom, right } = area;
+
+    if (handle.includes("n")) top += dy;
+    if (handle.includes("s")) bottom += dy;
+    if (handle.includes("w")) left += dx;
+    if (handle.includes("e")) right += dx;
+
+    top = clampRatio(top);
+    left = clampRatio(left);
+    bottom = clampRatio(bottom);
+    right = clampRatio(right);
+
+    if (right - left < MIN_AREA_SIZE) {
+        if (handle.includes("w")) {
+            left = Math.max(0, right - MIN_AREA_SIZE);
+        } else {
+            right = Math.min(1, left + MIN_AREA_SIZE);
+        }
+    }
+
+    if (bottom - top < MIN_AREA_SIZE) {
+        if (handle.includes("n")) {
+            top = Math.max(0, bottom - MIN_AREA_SIZE);
+        } else {
+            bottom = Math.min(1, top + MIN_AREA_SIZE);
+        }
+    }
+
+    return { ...area, top, left, bottom, right };
+}
+
+function areaFromDrag(drag: DragState, currentPage: number): Area | null {
+    if (drag.type === "create") {
+        return createAreaFromDrag(drag, currentPage);
+    }
+
+    if (!drag.initialArea) {
+        return null;
+    }
+
+    const dx = drag.currentX - drag.startX;
+    const dy = drag.currentY - drag.startY;
+
+    if (drag.type === "move") {
+        return moveArea(drag.initialArea, dx, dy);
+    }
+
+    if (drag.type === "resize" && drag.handle) {
+        return resizeArea(drag.initialArea, dx, dy, drag.handle);
+    }
+
+    return null;
+}
+
+function findAreaIndexOnPage(areas: Area[], currentPage: number, pageAreaIndex: number) {
+    const pageAreas = areas.filter((a) => a.page === currentPage);
+    const targetArea = pageAreas[pageAreaIndex];
+    return targetArea ? areas.indexOf(targetArea) : -1;
+}
+
+function replaceAreaOnPage(areas: Area[], currentPage: number, pageAreaIndex: number, updatedArea: Area) {
+    const globalIndex = findAreaIndexOnPage(areas, currentPage, pageAreaIndex);
+    if (globalIndex === -1) return areas;
+
+    const next = [...areas];
+    next[globalIndex] = updatedArea;
+    return next;
+}
+
+function removeAreaOnPage(areas: Area[], currentPage: number, pageAreaIndex: number) {
+    const globalIndex = findAreaIndexOnPage(areas, currentPage, pageAreaIndex);
+    if (globalIndex === -1) return areas;
+
+    const next = [...areas];
+    next.splice(globalIndex, 1);
+    return next;
 }
 
 export default function PdfPageViewer({
@@ -169,95 +293,12 @@ export default function PdfPageViewer({
             if (isAutoDetecting) return;
             if (!drag) return;
 
-            // 変更のコミット
-            if (drag.type === "create") {
-                const minX = Math.min(drag.startX, drag.currentX);
-                const maxX = Math.max(drag.startX, drag.currentX);
-                const minY = Math.min(drag.startY, drag.currentY);
-                const maxY = Math.max(drag.startY, drag.currentY);
+            const updatedArea = areaFromDrag(drag, currentPage);
 
-                if (maxX - minX > 0.01 && maxY - minY > 0.01) {
-                    const newArea: Area = {
-                        top: minY,
-                        left: minX,
-                        bottom: maxY,
-                        right: maxX,
-                        page: currentPage,
-                    };
-                    onAreasChange((prev) => [...prev, newArea]);
-                }
-            } else if (drag.type === "move" && drag.initialArea) {
-                const dx = drag.currentX - drag.startX;
-                const dy = drag.currentY - drag.startY;
-                const init = drag.initialArea;
-
-                let newTop = init.top + dy;
-                let newLeft = init.left + dx;
-                let newBottom = init.bottom + dy;
-                let newRight = init.right + dx;
-
-                const width = newRight - newLeft;
-                const height = newBottom - newTop;
-
-                // 範囲制限
-                if (newLeft < 0) { newLeft = 0; newRight = width; }
-                if (newTop < 0) { newTop = 0; newBottom = height; }
-                if (newRight > 1) { newRight = 1; newLeft = 1 - width; }
-                if (newBottom > 1) { newBottom = 1; newTop = 1 - height; }
-
-                const updatedArea = { ...init, top: newTop, left: newLeft, bottom: newBottom, right: newRight };
-
-                // グローバルな areas 配列の該当部分を更新
-                onAreasChange((prev) => {
-                    const pageAreas = prev.filter((a) => a.page === currentPage);
-                    const targetArea = pageAreas[drag.targetIndex];
-                    if (!targetArea) return prev;
-                    const globalIndex = prev.indexOf(targetArea);
-                    if (globalIndex === -1) return prev;
-                    const next = [...prev];
-                    next[globalIndex] = updatedArea;
-                    return next;
-                });
-            } else if (drag.type === "resize" && drag.initialArea && drag.handle) {
-                const dx = drag.currentX - drag.startX;
-                const dy = drag.currentY - drag.startY;
-                const init = drag.initialArea;
-
-                let { top, left, bottom, right } = init;
-
-                if (drag.handle.includes("n")) top += dy;
-                if (drag.handle.includes("s")) bottom += dy;
-                if (drag.handle.includes("w")) left += dx;
-                if (drag.handle.includes("e")) right += dx;
-
-                // 最小サイズ & 反転防止
-                if (right - left < 0.01) {
-                    if (drag.handle.includes("w")) left = right - 0.01;
-                    else right = left + 0.01;
-                }
-                if (bottom - top < 0.01) {
-                    if (drag.handle.includes("n")) top = bottom - 0.01;
-                    else bottom = top + 0.01;
-                }
-
-                const updatedArea = {
-                    top: Math.max(0, Math.min(1, top)),
-                    left: Math.max(0, Math.min(1, left)),
-                    bottom: Math.max(0, Math.min(1, bottom)),
-                    right: Math.max(0, Math.min(1, right)),
-                    page: currentPage
-                };
-
-                onAreasChange((prev) => {
-                    const pageAreas = prev.filter((a) => a.page === currentPage);
-                    const targetArea = pageAreas[drag.targetIndex];
-                    if (!targetArea) return prev;
-                    const globalIndex = prev.indexOf(targetArea);
-                    if (globalIndex === -1) return prev;
-                    const next = [...prev];
-                    next[globalIndex] = updatedArea;
-                    return next;
-                });
+            if (updatedArea && drag.type === "create") {
+                onAreasChange((prev) => [...prev, updatedArea]);
+            } else if (updatedArea) {
+                onAreasChange((prev) => replaceAreaOnPage(prev, currentPage, drag.targetIndex, updatedArea));
             }
 
             setDrag(null);
@@ -266,52 +307,14 @@ export default function PdfPageViewer({
     );
 
     const getRenderArea = (area: Area, index: number) => {
-        // ドラッグ中のエリアがあれば、その計算値を返す
         if (drag && (drag.type === "move" || drag.type === "resize") && drag.targetIndex === index && drag.initialArea) {
-            const dx = drag.currentX - drag.startX;
-            const dy = drag.currentY - drag.startY;
-            const init = drag.initialArea;
-
-            if (drag.type === "move") {
-                let top = init.top + dy;
-                let left = init.left + dx;
-                let bottom = init.bottom + dy;
-                let right = init.right + dx;
-
-                const w = right - left;
-                const h = bottom - top;
-
-                if (left < 0) { left = 0; right = w; }
-                if (top < 0) { top = 0; bottom = h; }
-                if (right > 1) { right = 1; left = 1 - w; }
-                if (bottom > 1) { bottom = 1; top = 1 - h; }
-
-                return { ...init, top, left, bottom, right };
-            } else if (drag.type === "resize" && drag.handle) {
-                const dx = drag.currentX - drag.startX; // ここはバグってたので修正不要、再利用
-                const dy = drag.currentY - drag.startY;
-                let { top, left, bottom, right } = init;
-                if (drag.handle.includes("n")) top += dy;
-                if (drag.handle.includes("s")) bottom += dy;
-                if (drag.handle.includes("w")) left += dx;
-                if (drag.handle.includes("e")) right += dx;
-                return { ...init, top, left, bottom, right };
-            }
+            return areaFromDrag(drag, currentPage) ?? area;
         }
         return area;
     };
 
     const removeArea = (index: number) => {
-        onAreasChange((prev) => {
-            const pageAreas = prev.filter((a) => a.page === currentPage);
-            const target = pageAreas[index];
-            if (!target) return prev;
-            const globalIndex = prev.indexOf(target);
-            if (globalIndex === -1) return prev;
-            const next = [...prev];
-            next.splice(globalIndex, 1);
-            return next;
-        });
+        onAreasChange((prev) => removeAreaOnPage(prev, currentPage, index));
     };
 
     const clearCurrentPage = () => {
@@ -421,7 +424,7 @@ export default function PdfPageViewer({
                                     }}
                                     onMouseDown={(e) => handleMouseDownArea(e, originalArea, i)}
                                 >
-                                    {["nw", "ne", "sw", "se", "n", "e", "s", "w"].map((h) => (
+                                    {RESIZE_HANDLES.map((h) => (
                                         <div
                                             key={h}
                                             className={`absolute w-3 h-3 bg-red-500 rounded-full border border-white z-20
@@ -429,8 +432,8 @@ export default function PdfPageViewer({
                                                 ${h.includes("n") ? "-top-1.5" : h.includes("s") ? "-bottom-1.5" : "top-1/2 -translate-y-1/2"}
                                                 ${h.includes("w") ? "-left-1.5" : h.includes("e") ? "-right-1.5" : "left-1/2 -translate-x-1/2"}
                                             `}
-                                            style={{ cursor: getResizeCursor(h as ResizeHandle) }}
-                                            onMouseDown={(e) => handleMouseDownHandle(e, originalArea, i, h as ResizeHandle)}
+                                            style={{ cursor: getResizeCursor(h) }}
+                                            onMouseDown={(e) => handleMouseDownHandle(e, originalArea, i, h)}
                                         />
                                     ))}
                                     <button

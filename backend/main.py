@@ -1,6 +1,8 @@
 import io
+import json
 import os
 import tempfile
+from dataclasses import dataclass
 from typing import Literal
 
 import pandas as pd
@@ -9,7 +11,6 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-import json
 from pdf2image import convert_from_path
 from pypdf import PdfReader
 
@@ -30,6 +31,13 @@ app.add_middleware(
 )
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@dataclass(frozen=True)
+class PageGeometry:
+    width_pt: float
+    height_pt: float
+    rotation: int
 
 
 def _strip_cell_newlines(df: pd.DataFrame) -> pd.DataFrame:
@@ -59,6 +67,223 @@ def _parse_area(area: str) -> list[float] | None:
         )
 
 
+def _get_page_geometry(reader: PdfReader, page_number: int) -> PageGeometry:
+    """表示上のページ寸法を Tabula 座標系の基準値として取得する。"""
+    if page_number < 1 or page_number > len(reader.pages):
+        raise HTTPException(status_code=404, detail=f"ページ {page_number} が見つかりません")
+
+    pdf_page = reader.pages[page_number - 1]
+    rotation = int(pdf_page.get('/Rotate', 0) or 0) % 360
+    width_pt = float(pdf_page.cropbox.width)
+    height_pt = float(pdf_page.cropbox.height)
+
+    if rotation in (90, 270):
+        width_pt, height_pt = height_pt, width_pt
+
+    return PageGeometry(width_pt=width_pt, height_pt=height_pt, rotation=rotation)
+
+
+def _clamp_ratio(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
+def _region_to_tabula_area(region: dict, geometry: PageGeometry) -> list[float]:
+    """0.0-1.0 の相対領域を Tabula の top,left,bottom,right pt に変換する。"""
+    try:
+        top_ratio = float(region.get("top", 0))
+        left_ratio = float(region.get("left", 0))
+        bottom_ratio = float(region.get("bottom", 0))
+        right_ratio = float(region.get("right", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="regions の座標は数値で指定してください")
+
+    if not (0 <= top_ratio < bottom_ratio <= 1 and 0 <= left_ratio < right_ratio <= 1):
+        raise HTTPException(
+            status_code=400,
+            detail="regions の座標は 0.0〜1.0 の範囲で top < bottom, left < right になるよう指定してください",
+        )
+
+    return [
+        top_ratio * geometry.height_pt,
+        left_ratio * geometry.width_pt,
+        bottom_ratio * geometry.height_pt,
+        right_ratio * geometry.width_pt,
+    ]
+
+
+def _tabula_table_to_region(table: dict, geometry: PageGeometry, page_number: int) -> dict:
+    """Tabula JSON の絶対座標をフロントエンド用の相対領域に変換する。"""
+    top = float(table.get("top", 0))
+    left = float(table.get("left", 0))
+    width = float(table.get("width", 0))
+    height = float(table.get("height", 0))
+
+    return {
+        "top": _clamp_ratio(top / geometry.height_pt),
+        "left": _clamp_ratio(left / geometry.width_pt),
+        "bottom": _clamp_ratio((top + height) / geometry.height_pt),
+        "right": _clamp_ratio((left + width) / geometry.width_pt),
+        "page": page_number,
+    }
+
+
+async def _read_pdf_upload(file: UploadFile) -> bytes:
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="ファイルサイズは 10MB 以下にしてください")
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF ファイルのみ対応しています")
+
+    return content
+
+
+def _write_temp_pdf(content: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(content)
+        return tmp.name
+
+
+def _parse_regions(regions: str) -> list[dict]:
+    try:
+        region_list = json.loads(regions) if regions else []
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="regions は JSON 配列文字列で指定してください")
+
+    if not isinstance(region_list, list):
+        raise HTTPException(status_code=400, detail="regions は JSON 配列文字列で指定してください")
+
+    for region in region_list:
+        if not isinstance(region, dict):
+            raise HTTPException(status_code=400, detail="regions の各要素はオブジェクトで指定してください")
+
+    return region_list
+
+
+def _group_regions_by_page(region_list: list[dict]) -> dict[int, list[dict]]:
+    page_regions: dict[int, list[dict]] = {}
+    for region in region_list:
+        try:
+            page_number = int(region.get("page", 1))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="regions の page は整数で指定してください")
+
+        if page_number < 1:
+            raise HTTPException(status_code=400, detail="regions の page は 1 以上で指定してください")
+
+        page_regions.setdefault(page_number, []).append(region)
+
+    return page_regions
+
+
+def _is_valid_table(df: pd.DataFrame) -> bool:
+    if df.empty:
+        return False
+    if df.shape in [(1, 2), (2, 1), (1, 1)]:
+        return False
+    if df.replace(r'^\s*$', float('nan'), regex=True).dropna(how='all').empty:
+        return False
+    return True
+
+
+def _filter_tables(dfs: list[pd.DataFrame] | None) -> list[pd.DataFrame]:
+    if not dfs:
+        return []
+    return [df for df in dfs if _is_valid_table(df)]
+
+
+def _extract_dataframes(
+    tmp_path: str,
+    mode: Literal["lattice", "stream"],
+    pages: str,
+    legacy_area: list[float] | None,
+    region_list: list[dict],
+) -> list[pd.DataFrame]:
+    if region_list:
+        reader = PdfReader(tmp_path)
+        all_dfs: list[pd.DataFrame] = []
+
+        for page_number, page_region_list in sorted(_group_regions_by_page(region_list).items()):
+            geometry = _get_page_geometry(reader, page_number)
+            areas_pt = [_region_to_tabula_area(region, geometry) for region in page_region_list]
+
+            dfs = tabula.read_pdf(
+                tmp_path,
+                pages=page_number,
+                multiple_tables=True,
+                lattice=(mode == "lattice"),
+                stream=(mode == "stream"),
+                area=areas_pt,
+                pandas_options={"dtype": str},
+            )
+            all_dfs.extend(_filter_tables(dfs))
+
+        return all_dfs
+
+    if legacy_area:
+        dfs = tabula.read_pdf(
+            tmp_path,
+            pages=pages,
+            multiple_tables=True,
+            lattice=(mode == "lattice"),
+            stream=(mode == "stream"),
+            area=legacy_area,
+            relative_area=True,
+            pandas_options={"dtype": str},
+        )
+        return _filter_tables(dfs)
+
+    dfs = tabula.read_pdf(
+        tmp_path,
+        pages=pages,
+        multiple_tables=True,
+        lattice=(mode == "lattice"),
+        stream=(mode == "stream"),
+        pandas_options={"dtype": str},
+    )
+    return _filter_tables(dfs)
+
+
+def _extract_dataframes_from_content(
+    content: bytes,
+    mode: Literal["lattice", "stream"],
+    pages: str,
+    area: str,
+    regions: str,
+) -> list[pd.DataFrame]:
+    legacy_area = _parse_area(area)
+    region_list = _parse_regions(regions)
+    tmp_path = _write_temp_pdf(content)
+
+    try:
+        return _extract_dataframes(tmp_path, mode, pages, legacy_area, region_list)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
+    finally:
+        os.unlink(tmp_path)
+
+
+def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    return _strip_cell_newlines(df.fillna(""))
+
+
+def _dataframe_to_table(df: pd.DataFrame, index: int) -> dict:
+    df = _clean_dataframe(df)
+    return {
+        "index": index,
+        "rows": len(df),
+        "columns": len(df.columns),
+        "headers": df.columns.tolist(),
+        "data": df.values.tolist(),
+    }
+
+
+def _dataframes_to_tables(dfs: list[pd.DataFrame]) -> list[dict]:
+    return [_dataframe_to_table(df, i) for i, df in enumerate(dfs)]
+
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Tabula Web API is running"}
@@ -75,16 +300,8 @@ async def get_page_image(
 
     - **page**: 1 始まりのページ番号
     """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="ファイルサイズは 10MB 以下にしてください")
-
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="PDF ファイルのみ対応しています")
-
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    content = await _read_pdf_upload(file)
+    tmp_path = _write_temp_pdf(content)
 
     try:
         images = convert_from_path(
@@ -116,16 +333,8 @@ async def get_page_count(
     PDF の総ページ数を返す。
     Screen B でのページ切り替えに使用。
     """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="ファイルサイズは 10MB 以下にしてください")
-
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="PDF ファイルのみ対応しています")
-
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    content = await _read_pdf_upload(file)
+    tmp_path = _write_temp_pdf(content)
 
     try:
         # pdf2image の pdfinfo を使ってページ数を取得
@@ -153,143 +362,9 @@ async def extract_table(
     - **regions**: 各ページの抽出範囲（割合 0.0-1.0）を指定する JSON 文字列
       例: '[{"page": 1, "top": 0.1, "left": 0.1, "bottom": 0.5, "right": 0.9}, ...]'
     """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="ファイルサイズは 10MB 以下にしてください")
-
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="PDF ファイルのみ対応しています")
-
-    # 旧来のエリア指定がある場合はパース
-    legacy_area = _parse_area(area)
-    
-    # 新しい複数領域指定のパース
-    try:
-        region_list = json.loads(regions) if regions else []
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="regions は JSON 配列文字列で指定してください")
-    if not isinstance(region_list, list):
-        raise HTTPException(status_code=400, detail="regions は JSON 配列文字列で指定してください")
-
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        all_dfs = []
-
-        # Case 1: Regions (Multi-page / Multi-area) が指定されている場合
-        if region_list:
-            reader = PdfReader(tmp_path)
-            # ページごとに処理をまとめる
-            page_regions = {}
-            for r in region_list:
-                p = int(r.get("page", 1))
-                if p not in page_regions:
-                    page_regions[p] = []
-                page_regions[p].append(r)
-
-            # ページごとに Tabula を実行
-            # Tabula-py の area は top, left, bottom, right (points)
-            for p_num, r_list in sorted(page_regions.items()):
-                # ページサイズ取得 (pypdf は 0-indexed)
-                if p_num - 1 < len(reader.pages):
-                    pdf_page = reader.pages[p_num - 1]
-                    rotation = pdf_page.get('/Rotate', 0)
-                    # MediaBox ではなく CropBox (表示領域) を使用する
-                    w_pt = float(pdf_page.cropbox.width)
-                    h_pt = float(pdf_page.cropbox.height)
-                    if rotation in [90, 270]:
-                        w_pt, h_pt = h_pt, w_pt
-                else:
-                    # ページ番号が範囲外の場合はスキップするか、デフォルトサイズ仮定など
-                    continue
-
-                areas_pt = []
-                for r in r_list:
-                    # 0.0-1.0 の割合をポイントに変換
-                    top = float(r.get("top", 0)) * h_pt
-                    left = float(r.get("left", 0)) * w_pt
-                    bottom = float(r.get("bottom", 0)) * h_pt
-                    right = float(r.get("right", 0)) * w_pt
-                    areas_pt.append([top, left, bottom, right])
-                
-                # print(f"[DEBUG] Page {p_num}: Rotation={rotation}, W={w_pt}, H={h_pt}")
-                # print(f"[DEBUG] Areas PT: {areas_pt}")
-
-                if areas_pt:
-                    dfs = tabula.read_pdf(
-                        tmp_path,
-                        pages=p_num,
-                        multiple_tables=True,
-                        lattice=(mode == "lattice"),
-                        stream=(mode == "stream"),
-                        area=areas_pt,
-                        pandas_options={"dtype": str},
-                    )
-                    # print(f"[DEBUG] DFS Count: {len(dfs)}")
-                    
-                    if dfs:
-                         for df in dfs:
-                            if df.empty: continue
-                            if df.shape in [(1, 2), (2, 1), (1, 1)]: continue
-                            if df.replace(r'^\s*$', float('nan'), regex=True).dropna(how='all').empty: continue
-                            all_dfs.append(df)
-
-        # Case 2: Legacy Area (Single area)
-        elif legacy_area:
-             # 旧来の area パラメータは相対座標(%)で来ることを想定しないといけないが
-             # verify_backend.sh でテストした通り relative_area=True で処理する
-            dfs = tabula.read_pdf(
-                tmp_path,
-                pages=pages,
-                multiple_tables=True,
-                lattice=(mode == "lattice"),
-                stream=(mode == "stream"),
-                area=legacy_area,
-                relative_area=True,
-                pandas_options={"dtype": str},
-            )
-            if dfs:
-                for df in dfs:
-                    if df.empty: continue
-                    if df.shape in [(1, 2), (2, 1), (1, 1)]: continue
-                    if df.replace(r'^\s*$', float('nan'), regex=True).dropna(how='all').empty: continue
-                    all_dfs.append(df)
-        
-        # Case 3: 全自動
-        else:
-            dfs = tabula.read_pdf(
-                tmp_path,
-                pages=pages,
-                multiple_tables=True,
-                lattice=(mode == "lattice"),
-                stream=(mode == "stream"),
-                pandas_options={"dtype": str},
-            )
-            if dfs:
-                all_dfs.extend(dfs)
-
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
-    finally:
-        os.unlink(tmp_path)
-
-    tables = []
-    # all_dfs が空の場合や None の場合をケア
-    if all_dfs:
-        for i, df in enumerate(all_dfs):
-            df = df.fillna("")
-            df = _strip_cell_newlines(df)
-            tables.append(
-                {
-                    "index": i,
-                    "rows": len(df),
-                    "columns": len(df.columns),
-                    "headers": df.columns.tolist(),
-                    "data": df.values.tolist(),
-                }
-            )
+    content = await _read_pdf_upload(file)
+    all_dfs = _extract_dataframes_from_content(content, mode, pages, area, regions)
+    tables = _dataframes_to_tables(all_dfs)
 
     return {"tables": tables, "count": len(tables)}
 
@@ -307,119 +382,20 @@ async def download_table(
     """
     指定したテーブルを CSV / Excel / JSON 形式でダウンロードする。
     """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="ファイルサイズは 10MB 以下にしてください")
-
-    legacy_area = _parse_area(area)
-    
-    try:
-        region_list = json.loads(regions) if regions else []
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="regions は JSON 配列文字列で指定してください")
-    if not isinstance(region_list, list):
-        raise HTTPException(status_code=400, detail="regions は JSON 配列文字列で指定してください")
-
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        all_dfs = []
-
-        # Case 1: Regions
-        if region_list:
-            reader = PdfReader(tmp_path)
-            page_regions = {}
-            for r in region_list:
-                p = int(r.get("page", 1))
-                if p not in page_regions:
-                    page_regions[p] = []
-                page_regions[p].append(r)
-
-            for p_num, r_list in sorted(page_regions.items()):
-                if p_num - 1 < len(reader.pages):
-                    pdf_page = reader.pages[p_num - 1]
-                    rotation = pdf_page.get('/Rotate', 0)
-                    w_pt = float(pdf_page.cropbox.width)
-                    h_pt = float(pdf_page.cropbox.height)
-                    if rotation in [90, 270]:
-                        w_pt, h_pt = h_pt, w_pt
-                else:
-                    continue
-
-                areas_pt = []
-                for r in r_list:
-                    top = float(r.get("top", 0)) * h_pt
-                    left = float(r.get("left", 0)) * w_pt
-                    bottom = float(r.get("bottom", 0)) * h_pt
-                    right = float(r.get("right", 0)) * w_pt
-                    areas_pt.append([top, left, bottom, right])
-
-                if areas_pt:
-                    dfs = tabula.read_pdf(
-                        tmp_path,
-                        pages=p_num,
-                        multiple_tables=True,
-                        lattice=(mode == "lattice"),
-                        stream=(mode == "stream"),
-                        area=areas_pt,
-                        pandas_options={"dtype": str},
-                    )
-                    if dfs:
-                        # 抽出時と同様のフィルタリング
-                        valid_dfs = []
-                        for df in dfs:
-                            if df.empty: continue
-                            if df.shape in [(1, 2), (2, 1), (1, 1)]: continue
-                            if df.replace(r'^\s*$', float('nan'), regex=True).dropna(how='all').empty: continue
-                            valid_dfs.append(df)
-                        all_dfs.extend(valid_dfs)
-
-        # Case 2: Legacy Area
-        elif legacy_area:
-            dfs = tabula.read_pdf(
-                tmp_path,
-                pages=pages,
-                multiple_tables=True,
-                lattice=(mode == "lattice"),
-                stream=(mode == "stream"),
-                area=legacy_area,
-                relative_area=True,
-                pandas_options={"dtype": str},
-            )
-            if dfs:
-                all_dfs.extend(dfs)
-        
-        # Case 3: Auto
-        else:
-            dfs = tabula.read_pdf(
-                tmp_path,
-                pages=pages,
-                multiple_tables=True,
-                lattice=(mode == "lattice"),
-                stream=(mode == "stream"),
-                pandas_options={"dtype": str},
-            )
-            if dfs:
-                all_dfs.extend(dfs)
-
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
-    finally:
-        os.unlink(tmp_path)
+    content = await _read_pdf_upload(file)
+    all_dfs = _extract_dataframes_from_content(content, mode, pages, area, regions)
 
     if not all_dfs:
         raise HTTPException(status_code=404, detail="テーブルが見つかりません")
 
-    if table_index != -1 and table_index >= len(all_dfs):
+    if table_index < -1 or table_index >= len(all_dfs):
         raise HTTPException(status_code=404, detail="指定したテーブルが見つかりません")
 
     if table_index == -1:
-        selected_dfs = [_strip_cell_newlines(df.fillna("")) for df in all_dfs]
+        selected_dfs = [_clean_dataframe(df) for df in all_dfs]
         base_name = "tables_all"
     else:
-        selected_dfs = [_strip_cell_newlines(all_dfs[table_index].fillna(""))]
+        selected_dfs = [_clean_dataframe(all_dfs[table_index])]
         base_name = f"table_{table_index + 1}"
 
     if format == "csv":
@@ -454,17 +430,7 @@ async def download_table(
         if len(selected_dfs) == 1:
             json_str = selected_dfs[0].to_json(orient="records", force_ascii=False)
         else:
-            payload = []
-            for i, df in enumerate(selected_dfs):
-                payload.append(
-                    {
-                        "index": i,
-                        "rows": len(df),
-                        "columns": len(df.columns),
-                        "headers": df.columns.tolist(),
-                        "data": df.values.tolist(),
-                    }
-                )
+            payload = _dataframes_to_tables(selected_dfs)
             json_str = json.dumps(payload, ensure_ascii=False)
         return StreamingResponse(
             iter([json_str]),
@@ -482,25 +448,13 @@ async def detect_tables(
     指定ページ内の表領域を自動検出し、相対座標（0.0〜1.0）のリストとして返す。
     Screen B での自動検出機能に使用。
     """
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="ファイルサイズは 10MB 以下にしてください")
-
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    content = await _read_pdf_upload(file)
+    tmp_path = _write_temp_pdf(content)
 
     try:
         # 1. pypdf でページサイズ（ポイント単位）を取得
-        from pypdf import PdfReader
-        
         reader = PdfReader(tmp_path)
-        if page < 1 or page > len(reader.pages):
-            raise HTTPException(status_code=404, detail=f"ページ {page} が見つかりません")
-            
-        pdf_page = reader.pages[page - 1]
-        width_pt = float(pdf_page.mediabox.width)
-        height_pt = float(pdf_page.mediabox.height)
+        geometry = _get_page_geometry(reader, page)
 
         # 2. tabula-py で表領域を検出 (guess=True, output_format="json")
         # JSON output contain list of tables with absolute coordinates (points)
@@ -515,6 +469,8 @@ async def detect_tables(
                            # But explicit mode might be needed? 
                            # Let's trust default guess behavior for detection.
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"PDF の解析に失敗しました: {str(e)}")
     finally:
@@ -524,25 +480,7 @@ async def detect_tables(
     detected_areas = []
     if tables:
         for t in tables:
-            # tabula json format properties: top, left, width, height (in points)
-            t_top = t.get("top", 0)
-            t_left = t.get("left", 0)
-            t_width = t.get("width", 0)
-            t_height = t.get("height", 0)
-            
-            # calculate bottom/right
-            t_bottom = t_top + t_height
-            t_right = t_left + t_width
-            
-            # normalize to 0.0 - 1.0
-            area = {
-                "top": min(max(t_top / height_pt, 0), 1),
-                "left": min(max(t_left / width_pt, 0), 1),
-                "bottom": min(max(t_bottom / height_pt, 0), 1),
-                "right": min(max(t_right / width_pt, 0), 1),
-                "page": page
-            }
-            detected_areas.append(area)
+            detected_areas.append(_tabula_table_to_region(t, geometry, page))
 
     return {"areas": detected_areas, "page": page}
 

@@ -1,71 +1,88 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import UploadZone from "@/components/UploadZone";
-import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
+import PdfPageViewer from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
-import { ExtractResponse, ExtractionMode, detectTables, extractTables, getPageCount } from "@/lib/api";
+import { ExtractResponse, ExtractionMode, getPageCount } from "@/lib/api";
+import { buildExtractionPayload } from "@/lib/extractionPayload";
+import { useAutoDetectAreas } from "@/hooks/useAutoDetectAreas";
+import { usePdfAreas } from "@/hooks/usePdfAreas";
+import { usePdfExtractionActions } from "@/hooks/usePdfExtractionActions";
 import { useI18n } from "@/components/I18nProvider";
 
 type Step = "upload" | "select" | "preview";
-
-// 複数領域（ページ、座標）をJSON文字列化
-function areasToRegionsJson(areas: Area[]): string {
-  if (areas.length === 0) return "[]";
-  const regions = areas.map(a => ({
-    page: a.page,
-    top: a.top,
-    left: a.left,
-    bottom: a.bottom,
-    right: a.right
-  }));
-  return JSON.stringify(regions);
-}
-
-function areasToPages(areas: Area[]): string {
-  if (areas.length === 0) return "all";
-  const pages = [...new Set(areas.map((a) => a.page))].sort((a, b) => a - b);
-  return pages.join(",");
-}
 
 export default function Home() {
   const { t } = useI18n();
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [pageCount, setPageCount] = useState(0);
-  const [areas, setAreas] = useState<Area[]>([]);
-  const areasRef = useRef<Area[]>([]);
-  /* Policy A: 履歴を useRef 化 */
-  const processedPages = useRef<Set<number>>(new Set());
-
-  /* Policy A: onProcessPage を useCallback 化して安定化 */
-  const handleProcessPage = useCallback((page: number) => {
-    if (!processedPages.current.has(page)) {
-      processedPages.current.add(page);
-      setProcessedPageCount(processedPages.current.size);
-    }
-  }, []);
 
   const [mode, setMode] = useState<ExtractionMode>("lattice");
   const [result, setResult] = useState<ExtractResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isReextracting, setIsReextracting] = useState(false);
-  const [isAutoDetecting, setIsAutoDetecting] = useState(false);
-  const [autoDetectCurrentPage, setAutoDetectCurrentPage] = useState<number | null>(null);
-  const [processedPageCount, setProcessedPageCount] = useState(0);
+
+  const invalidateResult = useCallback(() => {
+    setResult(null);
+  }, []);
+
+  const {
+    areas,
+    clearAreas,
+    getCurrentAreas,
+    handleAreasChange,
+    replaceAreas,
+  } = usePdfAreas({ onAreasChanged: invalidateResult });
+
+  const handleExtracted = useCallback((data: ExtractResponse) => {
+    setResult(data);
+    setStep("preview");
+  }, []);
+
+  const handleReextracted = useCallback((data: ExtractResponse) => {
+    setResult(data);
+  }, []);
+
+  const {
+    isAutoDetecting,
+    autoDetectCurrentPage,
+    processedPageCount,
+    resetAutoDetect,
+  } = useAutoDetectAreas({
+    file,
+    pageCount,
+    onAreasDetected: replaceAreas,
+  });
+
+  const {
+    loading,
+    error,
+    isReextracting,
+    setLoading,
+    setError,
+    clearError,
+    handleExtract,
+    handleModeChange,
+  } = usePdfExtractionActions({
+    file,
+    mode,
+    setMode,
+    isAutoDetecting,
+    getAreas: getCurrentAreas,
+    onExtracted: handleExtracted,
+    onReextracted: handleReextracted,
+    messages: {
+      extractFailed: t("api_extract_failed"),
+      reextractFailed: t("api_reextract_failed"),
+    },
+  });
 
   // Screen A → B
   const handleFileSelect = async (f: File) => {
     setFile(f);
     setResult(null);
-    setAreas([]);
-    areasRef.current = [];
-    setIsAutoDetecting(false);
-    setAutoDetectCurrentPage(null);
-    setProcessedPageCount(0);
-    // Policy A: リセット経路の網羅
-    processedPages.current.clear();
+    clearAreas();
+    resetAutoDetect();
     setLoading(true);
     try {
       const count = await getPageCount(f);
@@ -78,67 +95,23 @@ export default function Home() {
     }
   };
 
-  // Screen B → C（抽出実行）
-  const handleExtract = async () => {
-    if (!file || isAutoDetecting) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const currentAreas = areasRef.current;
-      const area = "";
-      const regions = areasToRegionsJson(currentAreas);
-      const pages = currentAreas.length > 0 ? areasToPages(currentAreas) : "all";
-      const data = await extractTables(file, mode, pages, area, regions);
-      setResult(data);
-      setStep("preview");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("api_extract_failed"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Screen C: アルゴリズム切替 → 再抽出
-  const handleModeChange = async (newMode: ExtractionMode) => {
-    if (!file || newMode === mode) return;
-    setMode(newMode);
-    setIsReextracting(true);
-    try {
-      const currentAreas = areasRef.current;
-      const area = "";
-      const regions = areasToRegionsJson(currentAreas);
-      const pages = currentAreas.length > 0 ? areasToPages(currentAreas) : "all";
-      const data = await extractTables(file, newMode, pages, area, regions);
-      setResult(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("api_reextract_failed"));
-    } finally {
-      setIsReextracting(false);
-    }
-  };
-
   // Screen C → B（選択に戻る）
   const handleRevise = () => {
     setStep("select");
     setResult(null);
-    setError(null);
+    clearError();
   };
 
   // 全リセット
   const handleReset = () => {
     setStep("upload");
     setFile(null);
-    setAreas([]);
-    areasRef.current = [];
+    clearAreas();
     setResult(null);
-    setError(null);
+    clearError();
     setMode("lattice");
     setPageCount(1);
-    setIsAutoDetecting(false);
-    setAutoDetectCurrentPage(null);
-    setProcessedPageCount(0);
-    // Policy A: リセット経路の網羅
-    processedPages.current.clear();
+    resetAutoDetect();
   };
 
   // ステップインジケーター
@@ -148,73 +121,7 @@ export default function Home() {
     { key: "preview", label: t("step_preview") },
   ];
 
-  const handleAreasChange = (nextAreas: React.SetStateAction<Area[]>) => {
-    const resolved = typeof nextAreas === "function"
-      ? (nextAreas as (prev: Area[]) => Area[])(areasRef.current)
-      : nextAreas;
-    areasRef.current = resolved;
-    setAreas(resolved);
-    // 範囲が更新されたら、既存の抽出結果は無効化する
-    setResult(null);
-  };
-
-  useEffect(() => {
-    if (!file || pageCount <= 0) return;
-
-    let cancelled = false;
-
-    const runAutoDetectAllPages = async () => {
-      setIsAutoDetecting(true);
-      setAutoDetectCurrentPage(null);
-      setProcessedPageCount(0);
-      processedPages.current.clear();
-      const collectedAreas: Area[] = [];
-
-      for (let p = 1; p <= pageCount; p++) {
-        if (cancelled) return;
-        setAutoDetectCurrentPage(p);
-
-        try {
-          const res = await detectTables(file, p);
-          if (cancelled) return;
-
-          if (res.areas.length > 0) {
-            collectedAreas.push(...res.areas);
-          }
-        } catch (e) {
-          if (!cancelled) {
-            console.warn(`[AutoDetect] Failed: Page ${p}`, e);
-          }
-        } finally {
-          handleProcessPage(p);
-        }
-      }
-
-      if (!cancelled) {
-        areasRef.current = collectedAreas;
-        setAreas(collectedAreas);
-        setResult(null);
-        setAutoDetectCurrentPage(null);
-        setIsAutoDetecting(false);
-      }
-    };
-
-    runAutoDetectAllPages();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [file, pageCount, handleProcessPage]);
-
-  /* 修正: regionsString を定義して渡す */
-  const currentAreasForPayload = areasRef.current;
-  const areaString = "";
-  const regionsString = currentAreasForPayload.length > 0 ? areasToRegionsJson(currentAreasForPayload) : "[]";
-  const pagesString = currentAreasForPayload.length > 0 ? areasToPages(currentAreasForPayload) : "all";
-
-  /* ... */
-
-
+  const extractionPayload = buildExtractionPayload(getCurrentAreas());
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white">
@@ -430,9 +337,9 @@ export default function Home() {
                     tables={result.tables}
                     file={file}
                     mode={mode}
-                    pages={pagesString}
-                    area={areaString}
-                    regions={regionsString}
+                    pages={extractionPayload.pages}
+                    area={extractionPayload.area}
+                    regions={extractionPayload.regions}
                     onModeChange={handleModeChange}
                     onRevise={handleRevise}
                     isReextracting={isReextracting}
@@ -449,9 +356,9 @@ export default function Home() {
                       tables={[]}
                       file={file}
                       mode={mode}
-                      pages={pagesString}
-                      area={areaString}
-                      regions={regionsString}
+                      pages={extractionPayload.pages}
+                      area={extractionPayload.area}
+                      regions={extractionPayload.regions}
                       onModeChange={handleModeChange}
                       onRevise={handleRevise}
                       isReextracting={isReextracting}
