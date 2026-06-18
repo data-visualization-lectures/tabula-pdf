@@ -5,28 +5,10 @@ import UploadZone from "@/components/UploadZone";
 import PdfPageViewer, { Area } from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
 import { ExtractResponse, ExtractionMode, detectTables, extractTables, getPageCount } from "@/lib/api";
+import { buildExtractionPayload } from "@/lib/extractionPayload";
 import { useI18n } from "@/components/I18nProvider";
 
 type Step = "upload" | "select" | "preview";
-
-// 複数領域（ページ、座標）をJSON文字列化
-function areasToRegionsJson(areas: Area[]): string {
-  if (areas.length === 0) return "[]";
-  const regions = areas.map(a => ({
-    page: a.page,
-    top: a.top,
-    left: a.left,
-    bottom: a.bottom,
-    right: a.right
-  }));
-  return JSON.stringify(regions);
-}
-
-function areasToPages(areas: Area[]): string {
-  if (areas.length === 0) return "all";
-  const pages = [...new Set(areas.map((a) => a.page))].sort((a, b) => a - b);
-  return pages.join(",");
-}
 
 export default function Home() {
   const { t } = useI18n();
@@ -85,10 +67,8 @@ export default function Home() {
     setError(null);
     try {
       const currentAreas = areasRef.current;
-      const area = "";
-      const regions = areasToRegionsJson(currentAreas);
-      const pages = currentAreas.length > 0 ? areasToPages(currentAreas) : "all";
-      const data = await extractTables(file, mode, pages, area, regions);
+      const payload = buildExtractionPayload(currentAreas);
+      const data = await extractTables(file, mode, payload.pages, payload.area, payload.regions);
       setResult(data);
       setStep("preview");
     } catch (e) {
@@ -105,10 +85,8 @@ export default function Home() {
     setIsReextracting(true);
     try {
       const currentAreas = areasRef.current;
-      const area = "";
-      const regions = areasToRegionsJson(currentAreas);
-      const pages = currentAreas.length > 0 ? areasToPages(currentAreas) : "all";
-      const data = await extractTables(file, newMode, pages, area, regions);
+      const payload = buildExtractionPayload(currentAreas);
+      const data = await extractTables(file, newMode, payload.pages, payload.area, payload.regions);
       setResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("api_reextract_failed"));
@@ -206,15 +184,7 @@ export default function Home() {
     };
   }, [file, pageCount, handleProcessPage]);
 
-  /* 修正: regionsString を定義して渡す */
-  const currentAreasForPayload = areasRef.current;
-  const areaString = "";
-  const regionsString = currentAreasForPayload.length > 0 ? areasToRegionsJson(currentAreasForPayload) : "[]";
-  const pagesString = currentAreasForPayload.length > 0 ? areasToPages(currentAreasForPayload) : "all";
-
-  /* ... */
-
-
+  const extractionPayload = buildExtractionPayload(areasRef.current);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white">
@@ -430,9 +400,9 @@ export default function Home() {
                     tables={result.tables}
                     file={file}
                     mode={mode}
-                    pages={pagesString}
-                    area={areaString}
-                    regions={regionsString}
+                    pages={extractionPayload.pages}
+                    area={extractionPayload.area}
+                    regions={extractionPayload.regions}
                     onModeChange={handleModeChange}
                     onRevise={handleRevise}
                     isReextracting={isReextracting}
@@ -449,9 +419,9 @@ export default function Home() {
                       tables={[]}
                       file={file}
                       mode={mode}
-                      pages={pagesString}
-                      area={areaString}
-                      regions={regionsString}
+                      pages={extractionPayload.pages}
+                      area={extractionPayload.area}
+                      regions={extractionPayload.regions}
                       onModeChange={handleModeChange}
                       onRevise={handleRevise}
                       isReextracting={isReextracting}
