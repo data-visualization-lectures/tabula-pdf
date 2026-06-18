@@ -63,7 +63,7 @@ export default function TablePreview({
                                     flex-1 px-5 py-2 text-sm font-medium transition-all
                                     ${mode === m
                                         ? "bg-indigo-600 text-white"
-                                        : "bg-white/5 text-slate-400 hover:bg-white/10"
+                                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                                     }
                                     disabled:opacity-50 disabled:cursor-not-allowed
                                 `}
