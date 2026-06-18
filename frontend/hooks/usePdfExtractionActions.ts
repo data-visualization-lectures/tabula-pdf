@@ -73,8 +73,6 @@ export function usePdfExtractionActions({
     loading,
     error,
     isReextracting,
-    setLoading,
-    setError,
     clearError,
     handleExtract,
     handleModeChange,

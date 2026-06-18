@@ -4,11 +4,12 @@ import { useState, useCallback } from "react";
 import UploadZone from "@/components/UploadZone";
 import PdfPageViewer from "@/components/PdfPageViewer";
 import TablePreview from "@/components/TablePreview";
-import { ExtractResponse, ExtractionMode, getPageCount } from "@/lib/api";
+import { ExtractResponse, ExtractionMode } from "@/lib/api";
 import { buildExtractionPayload } from "@/lib/extractionPayload";
 import { useAutoDetectAreas } from "@/hooks/useAutoDetectAreas";
 import { usePdfAreas } from "@/hooks/usePdfAreas";
 import { usePdfExtractionActions } from "@/hooks/usePdfExtractionActions";
+import { usePdfFileSetup } from "@/hooks/usePdfFileSetup";
 import { useI18n } from "@/components/I18nProvider";
 
 type Step = "upload" | "select" | "preview";
@@ -16,8 +17,6 @@ type Step = "upload" | "select" | "preview";
 export default function Home() {
   const { t } = useI18n();
   const [step, setStep] = useState<Step>("upload");
-  const [file, setFile] = useState<File | null>(null);
-  const [pageCount, setPageCount] = useState(0);
 
   const [mode, setMode] = useState<ExtractionMode>("lattice");
   const [result, setResult] = useState<ExtractResponse | null>(null);
@@ -43,6 +42,31 @@ export default function Home() {
     setResult(data);
   }, []);
 
+  const handleFileLoadStart = useCallback(() => {
+    setResult(null);
+    clearAreas();
+  }, [clearAreas]);
+
+  const handleFileLoaded = useCallback(() => {
+    setStep("select");
+  }, []);
+
+  const {
+    file,
+    pageCount,
+    isLoadingFile,
+    fileError,
+    clearFileError,
+    handleFileSelect: loadFile,
+    resetFileSetup,
+  } = usePdfFileSetup({
+    onBeforeLoad: handleFileLoadStart,
+    onLoaded: handleFileLoaded,
+    messages: {
+      pdfLoadFailed: t("api_pdf_load_failed"),
+    },
+  });
+
   const {
     isAutoDetecting,
     autoDetectCurrentPage,
@@ -54,13 +78,16 @@ export default function Home() {
     onAreasDetected: replaceAreas,
   });
 
+  const handleFileSelect = useCallback((nextFile: File) => {
+    resetAutoDetect();
+    loadFile(nextFile);
+  }, [loadFile, resetAutoDetect]);
+
   const {
-    loading,
-    error,
+    loading: isExtracting,
+    error: extractionError,
     isReextracting,
-    setLoading,
-    setError,
-    clearError,
+    clearError: clearExtractionError,
     handleExtract,
     handleModeChange,
   } = usePdfExtractionActions({
@@ -77,40 +104,25 @@ export default function Home() {
     },
   });
 
-  // Screen A → B
-  const handleFileSelect = async (f: File) => {
-    setFile(f);
-    setResult(null);
-    clearAreas();
-    resetAutoDetect();
-    setLoading(true);
-    try {
-      const count = await getPageCount(f);
-      setPageCount(count);
-      setStep("select");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("api_pdf_load_failed"));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loading = isLoadingFile || isExtracting;
+  const error = fileError ?? extractionError;
 
   // Screen C → B（選択に戻る）
   const handleRevise = () => {
     setStep("select");
     setResult(null);
-    clearError();
+    clearExtractionError();
   };
 
   // 全リセット
   const handleReset = () => {
     setStep("upload");
-    setFile(null);
+    resetFileSetup();
     clearAreas();
     setResult(null);
-    clearError();
+    clearFileError();
+    clearExtractionError();
     setMode("lattice");
-    setPageCount(1);
     resetAutoDetect();
   };
 
