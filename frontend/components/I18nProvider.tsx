@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import {
   type Locale,
   type TranslationKey,
@@ -17,15 +17,27 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
+function getSnapshot(): Locale {
+  return detectLocale();
+}
+
+function getServerSnapshot(): Locale {
+  return "ja";
+}
+
+function subscribe(onStoreChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("languagechange", onStoreChange);
+  return () => window.removeEventListener("languagechange", onStoreChange);
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocale] = useState<Locale>("ja");
+  const locale = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   useEffect(() => {
-    const detected = detectLocale();
-    setLocale(detected);
-    setApiLocale(detected);
-    document.documentElement.lang = detected;
-  }, []);
+    setApiLocale(locale);
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     tFn(dictionaries[locale], key, params);
