@@ -2,15 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, Dispatch, SetStateAction } from "react";
 import { getPageImageUrl } from "@/lib/api";
+import type { Area } from "@/lib/pdfAreas";
 import { useI18n } from "@/components/I18nProvider";
-
-export type Area = {
-    top: number;
-    left: number;
-    bottom: number;
-    right: number;
-    page: number;
-};
 
 type DragType = "create" | "move" | "resize";
 type ResizeHandle = "nw" | "ne" | "sw" | "se" | "n" | "e" | "s" | "w";

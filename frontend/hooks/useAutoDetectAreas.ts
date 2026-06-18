@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Area } from "@/components/PdfPageViewer";
+import type { Area } from "@/lib/pdfAreas";
 import { detectTables } from "@/lib/api";
 
 type UseAutoDetectAreasOptions = {
