@@ -136,21 +136,21 @@ export default function Home() {
   const extractionPayload = buildExtractionPayload(getCurrentAreas());
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white">
+    <div className="min-h-screen bg-[#FAFAFA] text-gray-900">
       {/* ヘッダー */}
-      <header className="border-b border-white/10 backdrop-blur-sm sticky top-0 z-10">
+      <header className="sticky top-12 z-10 border-b border-gray-200 bg-white">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-2xl">📊</span>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Tabula Web</h1>
-              <p className="text-xs text-slate-400">{t("header_subtitle")}</p>
+              <p className="text-xs text-gray-500">{t("header_subtitle")}</p>
             </div>
           </div>
           {step !== "upload" && (
             <button
               onClick={handleReset}
-              className="text-slate-400 hover:text-white text-sm transition-colors"
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 transition-colors hover:border-[#0F6CBD] hover:bg-gray-50"
             >
               {t("header_reset")}
             </button>
@@ -202,19 +202,19 @@ export default function Home() {
                   }}
                   disabled={!isClickable}
                   className={`
-                    text-sm font-medium px-3 py-1 rounded-full transition-all
+                    rounded-lg px-3 py-2 text-sm font-medium transition-all
                     ${isActive
-                      ? "bg-indigo-600 text-white cursor-default"
+                      ? "bg-[#0F6CBD] text-white cursor-default"
                       : isPast
-                        ? "bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800 cursor-pointer"
-                        : "text-slate-500 cursor-not-allowed"
+                        ? "border border-blue-200 bg-blue-50 text-[#0F6CBD] hover:bg-blue-100 cursor-pointer"
+                        : "text-gray-400 cursor-not-allowed"
                     }
                   `}
                 >
                   {s.label}
                 </button>
                 {i < steps.length - 1 && (
-                  <span className="text-slate-600">→</span>
+                  <span className="text-gray-400">→</span>
                 )}
               </div>
             );
@@ -223,25 +223,25 @@ export default function Home() {
 
         {/* エラー表示 */}
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-6 py-4 text-red-300 text-sm">
+          <div className="rounded-xl border border-red-200 bg-red-50 px-6 py-4 text-sm text-red-700">
             ⚠️ {error}
           </div>
         )}
 
         {/* ─── Screen A: アップロード ─── */}
         {step === "upload" && (
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
+          <div className="flex flex-col gap-6 rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
             <div className="text-center">
-              <h2 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-300 to-cyan-300 bg-clip-text text-transparent">
+              <h2 className="text-3xl font-bold tracking-tight text-gray-900">
                 {t("upload_heading")}
               </h2>
-              <p className="mt-2 text-slate-400">
+              <p className="mt-2 text-gray-600">
                 {t("upload_subheading")}
               </p>
             </div>
             <UploadZone onFileSelect={handleFileSelect} disabled={loading} />
             {loading && (
-              <p className="text-center text-slate-400 text-sm animate-pulse">
+              <p className="text-center text-sm text-gray-500 animate-pulse">
                 {t("upload_loading")}
               </p>
             )}
@@ -250,21 +250,21 @@ export default function Home() {
 
         {/* ─── Screen B: 範囲選択 ─── */}
         {step === "select" && file && (
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-8 flex flex-col gap-6">
+          <div className="flex flex-col gap-6 rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold">{t("select_heading")}</h2>
-                <p className="text-sm text-slate-400 mt-1">
+                <p className="text-sm text-gray-500 mt-1">
                   📄 {file.name}
                 </p>
               </div>
-              <div className="flex items-center gap-2 text-sm text-slate-400">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
                 {areas.length > 0 ? (
-                  <span className="px-3 py-1 rounded-full bg-red-500/20 border border-red-400/30 text-red-300">
+                  <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-red-700">
                     {t("select_areas_count", { count: areas.length })}
                   </span>
                 ) : (
-                  <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                  <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1">
                     {t("select_no_areas")}
                   </span>
                 )}
@@ -282,7 +282,7 @@ export default function Home() {
             />
 
             {isAutoDetecting ? (
-              <div className="w-full py-3.5 rounded-xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-200 text-sm flex items-center justify-center gap-2">
+              <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 py-3.5 text-sm text-[#0F6CBD]">
                 <span className="animate-spin">⏳</span>
                 {t("select_autodetecting", { processed: processedPageCount, total: pageCount })}
               </div>
@@ -291,11 +291,10 @@ export default function Home() {
                 onClick={handleExtract}
                 disabled={loading}
                 className="
-                                w-full py-3.5 rounded-xl font-bold text-base
-                                bg-gradient-to-r from-indigo-500 to-cyan-500
-                                hover:from-indigo-400 hover:to-cyan-400
+                                w-full rounded-xl bg-[#0F6CBD] py-3.5 text-base font-bold text-white
+                                hover:brightness-75
                                 disabled:opacity-40 disabled:cursor-not-allowed
-                                transition-all duration-200 shadow-lg shadow-indigo-500/20
+                                transition
                                 flex items-center justify-center gap-2
                             "
               >
@@ -320,7 +319,7 @@ export default function Home() {
         {/* ─── Screen C: プレビュー & エクスポート ─── */}
         {step === "preview" && result && file && (
           <div className="flex flex-col gap-4">
-            <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6">
+            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-bold">
                   {result.count > 0
@@ -328,7 +327,7 @@ export default function Home() {
                     : t("preview_no_tables")}
                 </h2>
                 {areas.length > 0 && (
-                  <span className="text-xs text-slate-400 bg-red-500/10 border border-red-400/20 px-3 py-1 rounded-full text-red-300">
+                  <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs text-red-700">
                     {t("preview_extracted_from", { count: areas.length })}
                   </span>
                 )}
@@ -337,14 +336,14 @@ export default function Home() {
               <div className="mb-4">
                 <button
                   onClick={handleRevise}
-                  className="text-indigo-300 hover:text-white text-sm flex items-center gap-1 transition-colors"
+                  className="flex items-center gap-1 text-sm text-[#0F6CBD] transition-colors hover:underline"
                 >
                   {t("preview_back")}
                 </button>
               </div>
 
               {result.count > 0 ? (
-                <div className="bg-white rounded-xl p-4 text-slate-900">
+                <div className="rounded-xl border border-gray-200 bg-white p-4 text-gray-900">
                   <TablePreview
                     tables={result.tables}
                     file={file}
@@ -357,12 +356,12 @@ export default function Home() {
                   />
                 </div>
               ) : (
-                <div className="bg-white rounded-xl p-8 text-slate-500 text-center">
+                <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-500">
                   <p>{t("preview_no_tables_detail")}</p>
                   <p className="text-sm mt-2">
                     {t("preview_no_tables_hint")}
                   </p>
-                  <div className="mt-4 bg-slate-50 rounded-xl p-4">
+                  <div className="mt-4 rounded-xl bg-gray-50 p-4">
                     <TablePreview
                       tables={[]}
                       file={file}
@@ -382,14 +381,14 @@ export default function Home() {
       </main>
 
       {/* フッター */}
-      <footer className="border-t border-white/10 mt-16">
-        <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-slate-500">
+      <footer className="mt-16 border-t border-gray-200">
+        <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-gray-500">
           Powered by{" "}
           <a
             href="https://github.com/tabulapdf/tabula-java"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-indigo-400 hover:underline"
+            className="text-[#0F6CBD] hover:underline"
           >
             tabula-java
           </a>{" "}
@@ -398,7 +397,7 @@ export default function Home() {
             href="https://github.com/chezou/tabula-py"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-indigo-400 hover:underline"
+            className="text-[#0F6CBD] hover:underline"
           >
             tabula-py
           </a>

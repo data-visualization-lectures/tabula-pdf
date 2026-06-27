@@ -38,11 +38,11 @@ export default function UploadZone({ onFileSelect, disabled }: UploadZoneProps) 
             onDrop={handleDrop}
             className={`
         relative flex flex-col items-center justify-center gap-4
-        rounded-2xl border-2 border-dashed p-12 text-center
+        rounded-xl border-2 border-dashed p-12 text-center
         transition-all duration-200 cursor-pointer
         ${isDragging
-                    ? "border-indigo-500 bg-indigo-50 scale-[1.01]"
-                    : "border-slate-300 bg-slate-50 hover:border-indigo-400 hover:bg-indigo-50/50"
+                    ? "border-[#0F6CBD] bg-blue-50"
+                    : "border-gray-300 bg-gray-50 hover:border-[#0F6CBD] hover:bg-blue-50"
                 }
         ${disabled ? "opacity-50 cursor-not-allowed" : ""}
       `}
@@ -57,10 +57,10 @@ export default function UploadZone({ onFileSelect, disabled }: UploadZoneProps) 
             />
             <div className="text-5xl">📄</div>
             <div>
-                <p className="text-lg font-semibold text-slate-700">
+                <p className="text-lg font-semibold text-gray-800">
                     {t("upload_drag")}
                 </p>
-                <p className="text-sm text-slate-500 mt-1">
+                <p className="text-sm text-gray-500 mt-1">
                     {t("upload_click")}
                 </p>
             </div>

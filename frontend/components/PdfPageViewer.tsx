@@ -301,22 +301,22 @@ export default function PdfPageViewer({
                     <button
                         onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                         disabled={currentPage === 1}
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm transition-all"
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 transition-all hover:border-[#0F6CBD] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         {t("page_prev")}
                     </button>
-                    <span className="text-sm text-slate-300">
+                    <span className="text-sm text-gray-600">
                         {t("page_indicator", { current: currentPage, total: pageCount })}
                     </span>
                     <button
                         onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
                         disabled={currentPage === pageCount}
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm transition-all"
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 transition-all hover:border-[#0F6CBD] hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         {t("page_next")}
                     </button>
                     {isAutoDetecting && (
-                        <span className="inline-flex items-center gap-1 text-xs text-indigo-300 animate-pulse">
+                        <span className="inline-flex items-center gap-1 text-xs text-[#0F6CBD] animate-pulse">
                             <span className="animate-spin">⏳</span>
                             {t("page_autodetecting", {
                                 processed: autoDetectProcessedCount,
@@ -332,7 +332,7 @@ export default function PdfPageViewer({
                         <button
                             onClick={clearCurrentPage}
                             disabled={isAutoDetecting}
-                            className="px-3 py-1.5 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             {t("page_clear_current")}
                         </button>
@@ -341,7 +341,7 @@ export default function PdfPageViewer({
                         <button
                             onClick={clearAll}
                             disabled={isAutoDetecting}
-                            className="px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             {t("page_clear_all")}
                         </button>
@@ -349,9 +349,9 @@ export default function PdfPageViewer({
                 </div>
             </div>
 
-            <div className="relative rounded-xl overflow-hidden border border-white/10 bg-slate-800 select-none">
+            <div className="relative overflow-hidden rounded-xl border border-gray-200 bg-gray-100 select-none">
                 {loadingImage ? (
-                    <div className="flex items-center justify-center h-96 text-slate-400">
+                    <div className="flex h-96 items-center justify-center text-gray-500">
                         <span className="animate-spin mr-2">⏳</span> {t("page_loading")}
                     </div>
                 ) : imageUrl ? (
@@ -424,17 +424,17 @@ export default function PdfPageViewer({
                         )}
 
                         {isAutoDetecting && (
-                            <div className="absolute inset-0 bg-slate-900/20 pointer-events-none" />
+                            <div className="absolute inset-0 bg-gray-900/20 pointer-events-none" />
                         )}
                     </div>
                 ) : (
-                    <div className="flex items-center justify-center h-96 text-slate-400">
+                    <div className="flex h-96 items-center justify-center text-gray-500">
                         {t("page_load_failed")}
                     </div>
                 )}
             </div>
 
-            <p className="text-xs text-slate-500 text-center">
+            <p className="text-center text-xs text-gray-500">
                 {t("page_hint")}
             </p>
         </div>
